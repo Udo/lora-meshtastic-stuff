@@ -26,6 +26,7 @@
 - On Linux, can be installed as a systemd user service for automatic startup with logs sent to journald or syslog-compatible collectors.
 - Persistent service settings for the Linux autostart units live in `.runtime/meshtastic/service.env`.
 - On first `proxy-autostart-install`, the wrapper creates `.runtime/meshtastic/service.env`, prints its location, and exits so the file can be reviewed before installing the units.
+- After the units already exist, edits to `.runtime/meshtastic/service.env` only require restarting the service; rerun `proxy-autostart-install` only when the unit files themselves need refreshing.
 
 ## Troubleshooting
 
@@ -37,7 +38,7 @@
 - If the Linux autostart service is installed, use `./setup/meshtastic-python.sh proxy-log` or `journalctl --user -u meshtastic-proxy.service -f` instead of tailing the file log.
 - A systemd user service starts after login by default. For startup before login after reboot, enable lingering for the user.
 - `proxy-autostart-status` prints the effective runtime root and proxy status snapshot path so it is obvious which repo checkout the service uses.
-- Re-running `proxy-autostart-install` refreshes the unit files but preserves `.runtime/meshtastic/service.env`; edit that file if the persistent serial port or TCP settings need to change.
+- Re-running `proxy-autostart-install` refreshes the unit files but preserves `.runtime/meshtastic/service.env`; use it for unit refreshes, not for ordinary config changes.
 
 ## Architecture
 

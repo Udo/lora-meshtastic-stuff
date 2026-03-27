@@ -1018,7 +1018,7 @@ proxy_autostart_install_user() {
   ensure_runtime_dir
   if ensure_service_config; then
     print_warn "Created persistent service config: ${SERVICE_CONFIG_FILE}"
-    print_warn "Review and edit it before re-running proxy-autostart-install."
+    print_warn "Review and edit it, then run proxy-autostart-install again to install the service units."
     return 0
   fi
   warn_if_service_config_differs
@@ -1073,7 +1073,7 @@ proxy_autostart_install_system() {
   ensure_runtime_dir
   if ensure_service_config; then
     print_warn "Created persistent service config: ${SERVICE_CONFIG_FILE}"
-    print_warn "Review and edit it before re-running proxy-autostart-install."
+    print_warn "Review and edit it, then run proxy-autostart-install again to install the service units."
     return 0
   fi
   warn_if_service_config_differs

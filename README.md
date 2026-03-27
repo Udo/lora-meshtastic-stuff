@@ -257,7 +257,8 @@ Notes:
 - Use `MESHTASTIC_LOG_DIR` or `--log-dir` the same way you would for `messages`.
 - `protocol` is intended for always-on collection; `messages sync` remains the narrower text-message transcript tool.
 - Persistent proxy/protocol service settings now live in `.runtime/meshtastic/service.env`. Reinstalling the systemd unit refreshes the unit file, but preserves that config file instead of silently rewriting the serial port or TCP settings.
-- On first `proxy-autostart-install`, the wrapper now creates `.runtime/meshtastic/service.env`, prints its path, and stops so you can review/edit it before the service units are installed.
+- On first `proxy-autostart-install`, the wrapper creates `.runtime/meshtastic/service.env`, prints its path, and stops so you can review/edit it before installing the service units.
+- After the units are already installed, editing `.runtime/meshtastic/service.env` only requires a service restart; you do not need to rerun `proxy-autostart-install` just to apply config changes.
 
 ## Messaging Tool
 
