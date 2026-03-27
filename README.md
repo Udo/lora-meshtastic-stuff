@@ -26,6 +26,10 @@ Common commands:
 ./setup/meshtastic-python.sh guided
 ./setup/meshtastic-python.sh probe
 ./setup/meshtastic-python.sh nodes
+./setup/meshtastic-python.sh nodedb-reset
+./setup/meshtastic-python.sh contacts list
+./setup/meshtastic-python.sh contacts keys
+./setup/meshtastic-python.sh contacts remove !0439d098
 ./setup/meshtastic-python.sh export-config
 ./setup/meshtastic-python.sh set-name "My Node" "MYND"
 ./setup/meshtastic-python.sh set-role CLIENT
@@ -194,6 +198,25 @@ Examples:
 ./setup/meshtastic-python.sh status raw-info
 ./setup/meshtastic-python.sh status traceroute !0438ca24
 ```
+
+NodeDB and contact maintenance:
+
+```bash
+./setup/meshtastic-python.sh nodedb-reset
+./setup/meshtastic-python.sh contacts list
+./setup/meshtastic-python.sh contacts keys
+./setup/meshtastic-python.sh contacts remove !0439d098
+./setup/meshtastic-python.sh contacts favorite !0439d098
+./setup/meshtastic-python.sh contacts ignore !0439d098
+```
+
+Notes:
+
+- `nodedb-reset` clears the connected node's known-node database so peer metadata is relearned from the mesh.
+- `contacts list` shows the current NodeDB entries, including whether a public key is known for each peer.
+- `contacts keys` focuses on the current peer public keys known to the node.
+- `contacts remove`, `favorite`, `unfavorite`, `ignore`, and `unignore` forward to the upstream Meshtastic admin actions.
+- There is no real Meshtastic CLI operation to manually inject an arbitrary new contact plus public key; contacts are learned from on-air node info.
 
 The summary view now reports the modem preset explicitly, even when the device is using the protobuf default enum value such as `LONG_FAST`.
 

@@ -165,6 +165,82 @@ main proxy-autostart-status --system
             "install:--system\nremove:--system\nstatus:--system\n",
         )
 
+    def test_main_dispatches_nodedb_reset(self) -> None:
+        result = run_wrapper_snippet(
+            """
+nodedb_reset() { printf 'nodedb-reset\n'; }
+main nodedb-reset
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "nodedb-reset\n")
+
+    def test_contacts_remove_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+contacts remove '!0439d098'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--remove-node !0439d098\n")
+
+    def test_contacts_favorite_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+contacts favorite '!0439d098'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--set-favorite-node !0439d098\n")
+
+    def test_contacts_ignore_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+contacts ignore '!0439d098'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--set-ignored-node !0439d098\n")
+
+    def test_contacts_add_reports_meshtastic_limitation(self) -> None:
+        result = run_wrapper_snippet("contacts add '!0439d098'")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("contacts add is not supported", result.stderr)
+
+    def test_doctor_reports_pkc_readiness(self) -> None:
+        result = run_wrapper_snippet(
+            """
+require_direct_serial() { :; }
+check_port() { :; }
+run_in_venv() {
+  if [[ "$1" == "meshtastic" ]]; then
+    printf 'probe-ok\n'
+    return 0
+  fi
+  if [[ "$1" == "python" ]]; then
+    printf '  Node PKC capable: yes\n'
+    printf '  Local public key: test-key\n'
+    printf '  Known peers with public keys: 1/2\n'
+    return 0
+  fi
+  return 1
+}
+doctor
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("PKC readiness:\n", result.stdout)
+        self.assertIn("Node PKC capable: yes\n", result.stdout)
+
     def test_proxy_autostart_install_system_restarts_existing_service(self) -> None:
         result = run_wrapper_snippet(
             """

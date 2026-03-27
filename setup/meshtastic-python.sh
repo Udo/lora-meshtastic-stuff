@@ -66,6 +66,8 @@ Commands:
   guided          Interactive ANSI-colored setup flow with sensible defaults
   probe           Probe the node with --info on the configured serial port
   nodes           Show the node table from the connected device
+  nodedb-reset    Clear the connected node's known-node database
+  contacts        List contacts or manage NodeDB entries (list|keys|remove|favorite|unfavorite|ignore|unignore)
   export-config   Export the node config as YAML to stdout
   set-name        Set the node long and short names
   set-role        Set the Meshtastic device role (node type)
@@ -1067,6 +1069,149 @@ nodes() {
   run_meshtastic_cli --nodes
 }
 
+nodedb_reset() {
+  run_meshtastic_cli --reset-nodedb
+}
+
+contacts() {
+  local action="${1:-list}"
+
+  case "${action}" in
+    list)
+      run_in_venv python - "${ROOT_DIR}" "${PORT}" "${HOST}" "${TCP_PORT}" <<'PY'
+import sys
+
+repo_root, port, host, tcp_port = sys.argv[1:5]
+sys.path.insert(0, repo_root)
+sys.path.insert(0, f"{repo_root}/tools")
+
+from _meshtastic_common import Palette, resolve_meshtastic_target, style
+
+from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
+
+
+def connect_interface(target):
+    if target.mode == "tcp":
+        return TCPInterface(target.host, portNumber=target.tcp_port)
+    return SerialInterface(target.serial_port)
+
+
+PALETTE = Palette()
+
+target = resolve_meshtastic_target(port=port, host=host, tcp_port=int(tcp_port))
+iface = connect_interface(target)
+try:
+    print(style(PALETTE, PALETTE.bold + PALETTE.cyan, "Contacts"))
+    header = f"{'ID':<12} {'Long Name':<24} {'Short':<8} {'Model':<14} {'PK':<3} {'Fav':<3} {'Ign':<3}"
+    print(style(PALETTE, PALETTE.bold, header))
+    for node in sorted(iface.nodes.values(), key=lambda item: item.get("num", 0)):
+        user = node.get("user", {})
+        print(
+            f"{user.get('id', '-'):12} "
+            f"{user.get('longName', '-'):24.24} "
+            f"{user.get('shortName', '-'):8.8} "
+            f"{user.get('hwModel', '-'):14.14} "
+            f"{'yes' if user.get('publicKey') else 'no':<3} "
+            f"{'yes' if node.get('isFavorite') else 'no':<3} "
+            f"{'yes' if user.get('isIgnored') or node.get('isIgnored') else 'no':<3}"
+        )
+finally:
+    iface.close()
+PY
+      ;;
+    keys)
+      run_in_venv python - "${ROOT_DIR}" "${PORT}" "${HOST}" "${TCP_PORT}" <<'PY'
+import sys
+
+repo_root, port, host, tcp_port = sys.argv[1:5]
+sys.path.insert(0, repo_root)
+sys.path.insert(0, f"{repo_root}/tools")
+
+from _meshtastic_common import Palette, resolve_meshtastic_target, style
+
+from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
+
+
+def connect_interface(target):
+    if target.mode == "tcp":
+        return TCPInterface(target.host, portNumber=target.tcp_port)
+    return SerialInterface(target.serial_port)
+
+
+PALETTE = Palette()
+
+target = resolve_meshtastic_target(port=port, host=host, tcp_port=int(tcp_port))
+iface = connect_interface(target)
+try:
+    print(style(PALETTE, PALETTE.bold + PALETTE.cyan, "Contact Keys"))
+    header = f"{'ID':<12} {'Long Name':<24} {'Short':<8} {'Public Key'}"
+    print(style(PALETTE, PALETTE.bold, header))
+    for node in sorted(iface.nodes.values(), key=lambda item: item.get("num", 0)):
+        user = node.get("user", {})
+        print(
+            f"{user.get('id', '-'):12} "
+            f"{user.get('longName', '-'):24.24} "
+            f"{user.get('shortName', '-'):8.8} "
+            f"{user.get('publicKey') or '-'}"
+        )
+finally:
+    iface.close()
+PY
+      ;;
+    add)
+      echo "Usage: setup/meshtastic-python.sh contacts add is not supported by Meshtastic radios." >&2
+      echo "Contacts are learned from on-air node info; use contacts list/keys to inspect them and nodedb-reset to force relearning." >&2
+      exit 1
+      ;;
+    remove)
+      local node_id="${2:-}"
+      if [[ -z "${node_id}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh contacts remove <NODE_ID>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --remove-node "${node_id}"
+      ;;
+    favorite)
+      local node_id="${2:-}"
+      if [[ -z "${node_id}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh contacts favorite <NODE_ID>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --set-favorite-node "${node_id}"
+      ;;
+    unfavorite)
+      local node_id="${2:-}"
+      if [[ -z "${node_id}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh contacts unfavorite <NODE_ID>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --remove-favorite-node "${node_id}"
+      ;;
+    ignore)
+      local node_id="${2:-}"
+      if [[ -z "${node_id}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh contacts ignore <NODE_ID>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --set-ignored-node "${node_id}"
+      ;;
+    unignore)
+      local node_id="${2:-}"
+      if [[ -z "${node_id}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh contacts unignore <NODE_ID>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --remove-ignored-node "${node_id}"
+      ;;
+    *)
+      echo "Usage: setup/meshtastic-python.sh contacts <list|keys|add|remove|favorite|unfavorite|ignore|unignore> [NODE_ID]" >&2
+      exit 1
+      ;;
+  esac
+}
+
 export_config() {
   run_meshtastic_cli --export-config
 }
@@ -1590,6 +1735,49 @@ Probe failed. Common causes:
 EOF
     return 1
   fi
+
+  echo
+  echo "PKC readiness:"
+  run_in_venv python - "${ROOT_DIR}" "${PORT}" <<'PY'
+import sys
+
+repo_root, port = sys.argv[1:3]
+sys.path.insert(0, repo_root)
+sys.path.insert(0, f"{repo_root}/tools")
+
+from google.protobuf.json_format import MessageToDict
+from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
+
+from _meshtastic_common import resolve_meshtastic_target
+
+
+def connect_interface(target):
+    if target.mode == "tcp":
+        return TCPInterface(target.host, portNumber=target.tcp_port)
+    return SerialInterface(target.serial_port)
+
+target = resolve_meshtastic_target(port=port)
+iface = connect_interface(target)
+try:
+    metadata = MessageToDict(iface.metadata)
+    local_node = next((node for node in iface.nodes.values() if node.get("num") == iface.myInfo.my_node_num), {})
+    local_user = local_node.get("user", {})
+    peer_count = 0
+    keyed_peers = 0
+    for node in iface.nodes.values():
+        user = node.get("user", {})
+        if user.get("id") == local_user.get("id"):
+            continue
+        peer_count += 1
+        if user.get("publicKey"):
+            keyed_peers += 1
+    print(f"  Node PKC capable: {'yes' if metadata.get('hasPKC') else 'no'}")
+    print(f"  Local public key: {local_user.get('publicKey') or '-'}")
+    print(f"  Known peers with public keys: {keyed_peers}/{peer_count}")
+finally:
+    iface.close()
+PY
 }
 
 rawlog() {
@@ -1647,6 +1835,13 @@ main() {
       ;;
     nodes)
       nodes
+      ;;
+    nodedb-reset)
+      nodedb_reset
+      ;;
+    contacts)
+      shift
+      contacts "$@"
       ;;
     export-config)
       export_config
