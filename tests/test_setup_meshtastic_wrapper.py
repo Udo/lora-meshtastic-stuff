@@ -28,9 +28,9 @@ class MeshtasticSetupWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "ready\n")
 
-        def test_ensure_venv_recreates_broken_environment(self) -> None:
-                result = run_wrapper_snippet(
-                        """
+    def test_ensure_venv_recreates_broken_environment(self) -> None:
+        result = run_wrapper_snippet(
+            """
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 VENV_DIR="$tmpdir/.venv"
@@ -41,50 +41,111 @@ exit 1
 EOF
 chmod +x "$VENV_DIR/bin/python"
 python3() {
-    if [[ "$1" == "-m" && "$2" == "venv" ]]; then
-        mkdir -p "$3/bin"
-        cat > "$3/bin/python" <<'EOF'
+  if [[ "$1" == "-m" && "$2" == "venv" ]]; then
+    mkdir -p "$3/bin"
+    cat > "$3/bin/python" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "-m" && "$2" == "pip" && "$3" == "--version" ]]; then
-    echo pip-ok
-    exit 0
+  echo pip-ok
+  exit 0
 fi
 exit 1
 EOF
-        chmod +x "$3/bin/python"
-        return 0
-    fi
-    return 1
+    chmod +x "$3/bin/python"
+    return 0
+  fi
+  return 1
 }
 ensure_venv
 "$VENV_DIR/bin/python" -m pip --version
 """
-                )
+        )
 
-                self.assertEqual(result.returncode, 0, msg=result.stderr)
-                self.assertIn("pip-ok\n", result.stdout)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("pip-ok\n", result.stdout)
 
-        def test_ensure_venv_reports_missing_system_venv_support(self) -> None:
-                result = run_wrapper_snippet(
-                        """
+    def test_create_venv_auto_installs_system_support_when_available(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+VENV_DIR="$tmpdir/.venv"
+marker="$tmpdir/venv-installed"
+python3() {
+  if [[ "$1" == "-m" && "$2" == "venv" ]]; then
+    if [[ ! -f "$marker" ]]; then
+      printf 'The virtual environment was not created successfully because ensurepip is not available.\n' >&2
+      return 1
+    fi
+    mkdir -p "$3/bin"
+    cat > "$3/bin/python" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-m" && "$2" == "pip" && "$3" == "--version" ]]; then
+  echo pip-ok
+  exit 0
+fi
+exit 1
+EOF
+    chmod +x "$3/bin/python"
+    return 0
+  fi
+  command python3 "$@"
+}
+can_auto_install_python_venv_support() { return 0; }
+install_python_venv_support() { touch "$marker"; }
+create_venv
+"$VENV_DIR/bin/python" -m pip --version
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("pip-ok\n", result.stdout)
+
+    def test_ensure_venv_reports_missing_system_venv_support(self) -> None:
+        result = run_wrapper_snippet(
+            """
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 VENV_DIR="$tmpdir/.venv"
 python3() {
-    if [[ "$1" == "-m" && "$2" == "venv" ]]; then
-        printf 'The virtual environment was not created successfully because ensurepip is not available.\n' >&2
-        return 1
-    fi
-    command python3 "$@"
+  if [[ "$1" == "-m" && "$2" == "venv" ]]; then
+    printf 'The virtual environment was not created successfully because ensurepip is not available.\n' >&2
+    return 1
+  fi
+  command python3 "$@"
 }
+can_auto_install_python_venv_support() { return 1; }
 ensure_venv
 """
-                )
+        )
 
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("python3 venv support is missing on this system.", result.stderr)
-                self.assertIn("Install python3.", result.stderr)
-                self.assertIn("-venv or python3-venv, then rerun this command.", result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("python3 venv support is missing on this system.", result.stderr)
+        self.assertIn("Install python3.", result.stderr)
+        self.assertIn("-venv or python3-venv, then rerun this command.", result.stderr)
+
+    def test_guided_runs_preflight_before_prompting(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+order_file="$tmpdir/order.txt"
+print_banner() { :; }
+print_warn() { :; }
+preflight_guided_setup() { echo preflight >> "$order_file"; }
+prompt_with_default() { echo "prompt:$1" >> "$order_file"; printf '%s\n' "$2"; }
+prompt_secret_optional() { echo secret >> "$order_file"; printf '\n'; }
+prompt_yes_no() { echo confirm >> "$order_file"; return 1; }
+guided >/dev/null 2>&1 || true
+cat "$order_file"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertEqual(lines[0], "preflight")
+        self.assertTrue(lines[1].startswith("prompt:"))
 
     def test_main_forwards_autostart_scope_arguments(self) -> None:
         result = run_wrapper_snippet(

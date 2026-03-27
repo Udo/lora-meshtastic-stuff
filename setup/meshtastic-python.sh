@@ -148,6 +148,38 @@ print(f"python{major}.{minor}-venv")
 PY
 }
 
+python_venv_fallback_package() {
+  printf 'python3-venv\n'
+}
+
+python_venv_support_missing() {
+  local error_log="${1}"
+  grep -Eqi 'ensurepip is not available|No module named ensurepip' "${error_log}"
+}
+
+can_auto_install_python_venv_support() {
+  command -v apt-get >/dev/null 2>&1 || return 1
+  if [[ "${EUID}" -eq 0 ]]; then
+    return 0
+  fi
+  command -v sudo >/dev/null 2>&1
+}
+
+install_python_venv_support() {
+  local primary_package fallback_package
+
+  primary_package="$(python_venv_package_hint)"
+  fallback_package="$(python_venv_fallback_package)"
+
+  print_info "Installing Python venv support (${primary_package} or ${fallback_package})..."
+  run_with_sudo env DEBIAN_FRONTEND=noninteractive apt-get update
+  if run_with_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${primary_package}"; then
+    return 0
+  fi
+
+  run_with_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${fallback_package}"
+}
+
 create_venv() {
   local error_log package_hint
 
@@ -160,9 +192,19 @@ create_venv() {
   rm -rf "${VENV_DIR}"
   package_hint="$(python_venv_package_hint)"
 
-  if grep -Eqi 'ensurepip is not available|No module named ensurepip' "${error_log}"; then
-    print_error "python3 venv support is missing on this system."
-    print_error "Install ${package_hint} or python3-venv, then rerun this command."
+  if python_venv_support_missing "${error_log}"; then
+    if can_auto_install_python_venv_support; then
+      print_warn "python3 venv support is missing on this system. Attempting to install it automatically."
+      if install_python_venv_support; then
+        rm -f "${error_log}"
+        python3 -m venv "${VENV_DIR}"
+        return 0
+      fi
+      print_error "Automatic installation of python3 venv support failed."
+    else
+      print_error "python3 venv support is missing on this system."
+      print_error "Install ${package_hint} or python3-venv, then rerun this command."
+    fi
   fi
 
   cat "${error_log}" >&2
@@ -1136,8 +1178,21 @@ provision() {
   probe
 }
 
+preflight_guided_setup() {
+  print_info 'Checking local prerequisites for guided setup...'
+  check_firmware
+  ensure_python_packages
+}
+
+guided_validate_selected_port() {
+  require_direct_serial
+  check_port
+}
+
 guided() {
   local default_host default_long default_short chosen_port chosen_region chosen_long chosen_short chosen_ssid chosen_psk
+
+  preflight_guided_setup
 
   default_host="$(hostname -s 2>/dev/null || printf 'node')"
   default_long="${OWNER_LONG:-Meshtastic ${default_host}}"
@@ -1160,6 +1215,7 @@ guided() {
   fi
 
   PORT="${chosen_port}"
+  guided_validate_selected_port
 
   printf '\n%sSelected configuration%s\n' "${COLOR_BOLD}" "${COLOR_RESET}"
   printf '  Port:   %s\n' "${PORT}"
