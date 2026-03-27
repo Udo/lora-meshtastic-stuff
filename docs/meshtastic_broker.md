@@ -16,6 +16,7 @@ This module is not intended as a standalone CLI. It is consumed by `tools/meshta
 - Uses a short provisional lease for new control claims so abandoned sessions age out quickly.
 - Upgrades the lease to a longer admin-session window when a radio-side admin response includes a session passkey.
 - Observes radio-side admin responses and records the last seen session passkey and the owner label active when that response arrived.
+- Returns frame-boundary metadata to the proxy so packet plugins can be dispatched without reparsing the raw stream.
 
 ## Troubleshooting
 

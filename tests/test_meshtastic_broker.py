@@ -1,6 +1,7 @@
 import json
 import pathlib
 import queue
+import shutil
 import socket
 import sys
 import tempfile
@@ -16,9 +17,9 @@ TOOLS_DIR = REPO_ROOT / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from meshtastic.protobuf import admin_pb2, mesh_pb2, portnums_pb2
+from meshtastic.protobuf import admin_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 
-from tools.meshtastic_broker import FrameParser, MeshtasticBroker, encode_frame
+from tools.meshtastic_broker import FrameParser, MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
 from tools.meshtastic_proxy import MeshtasticProxy
 
 
@@ -70,6 +71,25 @@ def make_text_frame() -> bytes:
     return make_frame(to_radio)
 
 
+def make_storeforward_client_frame(
+    rr: storeforward_pb2.StoreAndForward.RequestResponse.ValueType,
+    *,
+    history_messages: int = 0,
+    window: int = 0,
+    last_request: int = 0,
+) -> bytes:
+    request = storeforward_pb2.StoreAndForward(rr=rr)
+    if rr == storeforward_pb2.StoreAndForward.CLIENT_HISTORY:
+        request.history.history_messages = history_messages
+        request.history.window = window
+        request.history.last_request = last_request
+
+    to_radio = mesh_pb2.ToRadio()
+    to_radio.packet.decoded.portnum = portnums_pb2.STORE_FORWARD_APP
+    to_radio.packet.decoded.payload = request.SerializeToString()
+    return make_frame(to_radio)
+
+
 def make_fromradio_admin_response_frame(session_passkey: bytes = b"\x01\x02\x03\x04") -> bytes:
     admin_message = admin_pb2.AdminMessage()
     admin_message.session_passkey = session_passkey
@@ -79,6 +99,55 @@ def make_fromradio_admin_response_frame(session_passkey: bytes = b"\x01\x02\x03\
     from_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
     from_radio.packet.decoded.payload = admin_message.SerializeToString()
     return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_text_frame(payload: bytes = b"hello-radio") -> bytes:
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", 42)
+    from_radio.packet.to = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
+    from_radio.packet.decoded.payload = payload
+    return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_storeforward_request_frame(
+    rr: storeforward_pb2.StoreAndForward.RequestResponse.ValueType,
+    *,
+    from_node: int = 77,
+    history_messages: int = 0,
+    window: int = 0,
+    last_request: int = 0,
+) -> bytes:
+    request = storeforward_pb2.StoreAndForward(rr=rr)
+    if rr == storeforward_pb2.StoreAndForward.CLIENT_HISTORY:
+        request.history.history_messages = history_messages
+        request.history.window = window
+        request.history.last_request = last_request
+
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.STORE_FORWARD_APP
+    from_radio.packet.decoded.payload = request.SerializeToString()
+    return encode_frame(from_radio.SerializeToString())
+
+
+def recv_fromradio_frames(sock: socket.socket, expected_count: int, timeout: float = 1.0) -> list[mesh_pb2.FromRadio]:
+    parser = FrameParser()
+    frames: list[mesh_pb2.FromRadio] = []
+    deadline = time.time() + timeout
+    while time.time() < deadline and len(frames) < expected_count:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        parsed = parser.feed(chunk)
+        for frame in parsed.frames:
+            frames.append(decode_fromradio_frame(frame))
+            if len(frames) >= expected_count:
+                break
+    if len(frames) < expected_count:
+        raise AssertionError(f"expected {expected_count} frames, got {len(frames)}")
+    return frames
 
 
 def wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
@@ -308,6 +377,8 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.status_file = str(pathlib.Path(self.temp_dir.name) / "proxy-status.json")
+        self.plugins_dir = pathlib.Path(self.temp_dir.name) / "plugins"
+        self.plugins_dir.mkdir()
         self.fake_serial = FakeSerialHandle()
         self.proxy = LoopbackMeshtasticProxy(
             fake_serial=self.fake_serial,
@@ -317,6 +388,8 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             listen_port=0,
             reconnect_delay=0.01,
             status_file=self.status_file,
+            plugins_dir=str(self.plugins_dir),
+            tick_interval=0.05,
         )
         self.proxy.start_server()
         self.port = self.proxy.server_socket.getsockname()[1]
@@ -403,6 +476,250 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             self.assertTrue(replacement.closed)
         finally:
             temp_dir.cleanup()
+
+    def test_proxy_runs_radio_packet_plugin_and_hot_reloads_on_change(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "plugin-output.txt"
+        plugin_path = self.plugins_dir / "TEXT_MESSAGE_APP.handler.py"
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('v1:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_text_frame(b"first"))
+        wait_until(lambda: output_file.exists() and "v1:first" in output_file.read_text(encoding="utf-8"))
+
+        time.sleep(0.02)
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('v2:' + event['payload'].decode('utf-8').upper() + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_text_frame(b"second"))
+        wait_until(lambda: "v2:SECOND" in output_file.read_text(encoding="utf-8"))
+
+        lines = output_file.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines, ["v1:first", "v2:SECOND"])
+
+    def test_proxy_runs_client_call_plugin_for_forwarded_packet(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "client-plugin.txt"
+        plugin_path = self.plugins_dir / "TEXT_MESSAGE_APP.handler.py"
+        plugin_path.write_text(
+            "def handle_client_call(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(event['client_id'] + ':' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.sendall(make_text_frame())
+
+        wait_until(lambda: output_file.exists())
+        logged = output_file.read_text(encoding="utf-8").strip()
+        self.assertRegex(logged, r"^client-\d+:hello$")
+
+    def test_plugin_handler_errors_are_logged_and_do_not_break_proxy(self) -> None:
+        plugin_path = self.plugins_dir / "TEXT_MESSAGE_APP.handler.py"
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            "    raise RuntimeError('boom from plugin')\n",
+            encoding="utf-8",
+        )
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            with self.assertLogs("meshtastic_proxy", level="ERROR") as logs:
+                self.fake_serial.inject_read(make_fromradio_text_frame(b"still-broadcast"))
+                received = client.recv(1024)
+
+        self.assertEqual(received, make_fromradio_text_frame(b"still-broadcast"))
+        self.assertIn("plugin handler failed", "\n".join(logs.output))
+
+    def test_plugin_tick_runs_periodically(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "tick-output.txt"
+        plugin_path = self.plugins_dir / "256.handler.py"
+        plugin_path.write_text(
+            "def tick(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('tick\\n')\n",
+            encoding="utf-8",
+        )
+
+        tick_thread = threading.Thread(target=self.proxy.plugin_tick_loop, daemon=True)
+        tick_thread.start()
+        try:
+            wait_until(lambda: output_file.exists() and len(output_file.read_text(encoding='utf-8').splitlines()) >= 2)
+        finally:
+            self.proxy.stop_event.set()
+            tick_thread.join(timeout=1.0)
+
+        self.assertGreaterEqual(len(output_file.read_text(encoding="utf-8").splitlines()), 2)
+
+
+class StoreForwardPluginTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.status_file = str(pathlib.Path(self.temp_dir.name) / "proxy-status.json")
+        self.plugins_dir = pathlib.Path(self.temp_dir.name) / "plugins"
+        self.plugins_dir.mkdir()
+        for plugin_name in ("STORE_FORWARD_APP.handler.py", "TEXT_MESSAGE_APP.handler.py"):
+            shutil.copy2(REPO_ROOT / "plugins" / plugin_name, self.plugins_dir / plugin_name)
+
+        self.fake_serial = FakeSerialHandle()
+        self.proxy = LoopbackMeshtasticProxy(
+            fake_serial=self.fake_serial,
+            serial_port="fake-serial",
+            baudrate=115200,
+            listen_host="127.0.0.1",
+            listen_port=0,
+            reconnect_delay=0.01,
+            status_file=self.status_file,
+            plugins_dir=str(self.plugins_dir),
+            tick_interval=0.05,
+        )
+        self.proxy.start_server()
+        self.port = self.proxy.server_socket.getsockname()[1]
+        self.serial_thread = threading.Thread(target=self.proxy.serial_reader_loop, daemon=True)
+        self.accept_thread = threading.Thread(target=self.proxy.accept_loop, daemon=True)
+        self.serial_thread.start()
+        self.accept_thread.start()
+        wait_until(lambda: self.proxy.serial_ready.is_set())
+
+    def tearDown(self) -> None:
+        self.proxy.stop()
+        self.accept_thread.join(timeout=1.0)
+        self.serial_thread.join(timeout=1.0)
+        self.temp_dir.cleanup()
+
+    def restart_proxy(self) -> None:
+        self.proxy.stop()
+        self.accept_thread.join(timeout=1.0)
+        self.serial_thread.join(timeout=1.0)
+        self.fake_serial = FakeSerialHandle()
+        self.proxy = LoopbackMeshtasticProxy(
+            fake_serial=self.fake_serial,
+            serial_port="fake-serial",
+            baudrate=115200,
+            listen_host="127.0.0.1",
+            listen_port=0,
+            reconnect_delay=0.01,
+            status_file=self.status_file,
+            plugins_dir=str(self.plugins_dir),
+            tick_interval=0.05,
+        )
+        self.proxy.start_server()
+        self.port = self.proxy.server_socket.getsockname()[1]
+        self.serial_thread = threading.Thread(target=self.proxy.serial_reader_loop, daemon=True)
+        self.accept_thread = threading.Thread(target=self.proxy.accept_loop, daemon=True)
+        self.serial_thread.start()
+        self.accept_thread.start()
+        wait_until(lambda: self.proxy.serial_ready.is_set())
+
+    def test_store_forward_handler_replies_to_ping_without_forwarding_to_serial(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            client.sendall(make_storeforward_client_frame(storeforward_pb2.StoreAndForward.CLIENT_PING))
+            frames = recv_fromradio_frames(client, expected_count=1)
+
+        self.assertEqual(self.fake_serial.writes, [])
+        response = storeforward_pb2.StoreAndForward()
+        response.ParseFromString(frames[0].packet.decoded.payload)
+        self.assertEqual(frames[0].packet.decoded.portnum, portnums_pb2.STORE_FORWARD_APP)
+        self.assertEqual(response.rr, storeforward_pb2.StoreAndForward.ROUTER_PONG)
+
+    def test_store_forward_handler_replies_to_mesh_request_through_serial(self) -> None:
+        self.fake_serial.inject_read(make_fromradio_storeforward_request_frame(storeforward_pb2.StoreAndForward.CLIENT_PING, from_node=91))
+        wait_until(lambda: len(self.fake_serial.writes) == 1)
+
+        reply = decode_toradio_frame(self.fake_serial.writes[0])
+        response = storeforward_pb2.StoreAndForward()
+        response.ParseFromString(reply.packet.decoded.payload)
+
+        self.assertEqual(reply.packet.to, 91)
+        self.assertEqual(reply.packet.decoded.portnum, portnums_pb2.STORE_FORWARD_APP)
+        self.assertEqual(response.rr, storeforward_pb2.StoreAndForward.ROUTER_PONG)
+
+    def test_store_forward_handler_reports_stats_and_replays_archived_messages(self) -> None:
+        storage_file = self.proxy.plugin_state_dir / "TEXT_MESSAGE_APP" / "messages.jsonl"
+        self.fake_serial.inject_read(make_fromradio_text_frame(b"alpha"))
+        self.fake_serial.inject_read(make_fromradio_text_frame(b"beta"))
+        wait_until(lambda: storage_file.exists() and len(storage_file.read_text(encoding="utf-8").splitlines()) == 2)
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+
+            client.sendall(make_storeforward_client_frame(storeforward_pb2.StoreAndForward.CLIENT_STATS))
+            stats_frame = recv_fromradio_frames(client, expected_count=1)[0]
+            stats_response = storeforward_pb2.StoreAndForward()
+            stats_response.ParseFromString(stats_frame.packet.decoded.payload)
+
+            self.assertEqual(stats_response.rr, storeforward_pb2.StoreAndForward.ROUTER_STATS)
+            self.assertEqual(stats_response.stats.messages_total, 2)
+            self.assertEqual(stats_response.stats.messages_saved, 2)
+            self.assertGreaterEqual(stats_response.stats.requests, 1)
+
+            client.sendall(
+                make_storeforward_client_frame(
+                    storeforward_pb2.StoreAndForward.CLIENT_HISTORY,
+                    history_messages=10,
+                    window=60,
+                )
+            )
+            history_frames = recv_fromradio_frames(client, expected_count=3)
+
+        self.assertEqual(self.fake_serial.writes, [])
+
+        summary = storeforward_pb2.StoreAndForward()
+        summary.ParseFromString(history_frames[0].packet.decoded.payload)
+        self.assertEqual(summary.rr, storeforward_pb2.StoreAndForward.ROUTER_HISTORY)
+        self.assertEqual(summary.history.history_messages, 2)
+
+        text_payloads: list[bytes] = []
+        text_rrs: list[int] = []
+        for frame in history_frames[1:]:
+            response = storeforward_pb2.StoreAndForward()
+            response.ParseFromString(frame.packet.decoded.payload)
+            text_rrs.append(int(response.rr))
+            text_payloads.append(bytes(response.text))
+
+        self.assertEqual(text_payloads, [b"alpha", b"beta"])
+        self.assertEqual(
+            text_rrs,
+            [
+                int(storeforward_pb2.StoreAndForward.ROUTER_TEXT_BROADCAST),
+                int(storeforward_pb2.StoreAndForward.ROUTER_TEXT_BROADCAST),
+            ],
+        )
+
+    def test_store_forward_history_survives_proxy_restart_via_plugin_storage(self) -> None:
+        self.fake_serial.inject_read(make_fromradio_text_frame(b"persisted"))
+        storage_file = self.proxy.plugin_state_dir / "TEXT_MESSAGE_APP" / "messages.jsonl"
+        wait_until(lambda: storage_file.exists())
+
+        self.restart_proxy()
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            client.sendall(
+                make_storeforward_client_frame(
+                    storeforward_pb2.StoreAndForward.CLIENT_HISTORY,
+                    history_messages=5,
+                    window=60,
+                )
+            )
+            frames = recv_fromradio_frames(client, expected_count=2)
+
+        summary = storeforward_pb2.StoreAndForward()
+        summary.ParseFromString(frames[0].packet.decoded.payload)
+        replay = storeforward_pb2.StoreAndForward()
+        replay.ParseFromString(frames[1].packet.decoded.payload)
+
+        self.assertEqual(summary.rr, storeforward_pb2.StoreAndForward.ROUTER_HISTORY)
+        self.assertEqual(summary.history.history_messages, 1)
+        self.assertEqual(replay.text, b"persisted")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,10 @@
 - Owns the single Meshtastic serial device and exposes a Meshtastic-compatible TCP endpoint for local clients.
 - Broadcasts radio output to all connected TCP clients.
 - Delegates client-to-radio arbitration to `meshtastic_broker.py`.
+- Discovers packet handlers from the repo-local `plugins/` directory using `PORTNAME.handler.py` or `PORTNUM.handler.py` filenames.
+- Hot-reloads changed handler files without restarting the proxy.
+- Calls optional plugin entry points `handle_packet(event, api)`, `handle_client_call(event, api)`, and `tick(event, api)`.
+- Exposes a host-extension API so plugins can inspect mesh packets, persist state, and emit reply packets through the attached node without replacing firmware behavior.
 - When started through the wrapper, it auto-starts the `meshtastic_protocol.py` sidecar so a historical archive is collected automatically.
 - Writes a status snapshot JSON file used by wrappers and direct tools for auto-detection, health checks, and debugging.
 - Exports broker lease state including whether the current control owner has a confirmed admin session and how long that lease has left.
@@ -39,6 +43,8 @@
 - A systemd user service starts after login by default. For startup before login after reboot, enable lingering for the user.
 - `proxy-autostart-status` prints the effective runtime root and proxy status snapshot path so it is obvious which repo checkout the service uses.
 - Re-running `proxy-autostart-install` refreshes the unit files but preserves `.runtime/meshtastic/service.env`; use it for unit refreshes, not for ordinary config changes.
+- Plugin exceptions are logged but do not terminate the proxy. Under systemd, they show up in the service journal and any attached syslog-compatible collector.
+- Plugin state is stored under the proxy runtime directory in `plugins/<PLUGIN_NAME>/`, separate from the source `plugins/*.handler.py` files.
 
 ## Architecture
 
@@ -47,11 +53,39 @@
   - `MeshtasticProxy`: process lifecycle, TCP listener, serial reader, client threads.
   - `ClientConnection`: per-client socket wrapper with serialized sends.
   - `MeshtasticBroker`: frame-aware arbitration for client writes and radio-side protocol observation.
+  - `MeshtasticPluginManager`: filename-based plugin discovery, hot reload, and periodic ticks.
 - Data flow:
   - serial bytes are read in one thread, observed by the broker, written into the status snapshot, then broadcast to all clients.
+  - decoded radio packets also dispatch to matching `handle_packet()` plugins before broadcast.
   - client bytes are parsed by the broker; allowed frames go to serial, denied control writes get a direct broker error response.
+  - forwarded client packets also dispatch to matching `handle_client_call()` plugins.
+  - a periodic tick loop scans `plugins/*.handler.py` and calls `tick()` on any plugin that defines it.
+- Extension API:
+  - `send_app()` sends an app-port packet through the real node, keeping the firmware in charge of radio transmission.
+  - `reply_app()` replies either to a local proxy client or to a mesh-originated packet, depending on the triggering event.
+  - `plugin_store_append_jsonl()` and `plugin_store_read_jsonl()` provide simple durable state for protocol plugins.
+  - event dictionaries include source and destination node IDs, packet IDs, want-response flags, and a `plugin_origin_likely` hint to avoid trivial self-triggered loops.
 - State export:
-  - status snapshot includes TCP bind data, serial-connected state, broker counters, control owner, lease timing, and latest observed admin session metadata.
+  - status snapshot includes TCP bind data, serial-connected state, plugin directory, loaded plugin names, broker counters, control owner, lease timing, and latest observed admin session metadata.
   - wrapper JSON output also includes whether the proxy is managed manually or by the `meshtastic-proxy.service` systemd user unit.
 - Service configuration:
   - systemd units use `EnvironmentFile=.runtime/meshtastic/service.env` for the serial port, bind host, connect host, TCP port, baud rate, and protocol log name.
+
+## Plugin Example
+
+```python
+def handle_packet(event, api):
+    if event["portnum_name"] != "TEXT_MESSAGE_APP":
+        return
+    api["logger"].info("text packet: %r", event["payload"])
+
+
+def tick(event, api):
+    for client in api["list_clients"]():
+        api["logger"].debug("client connected: %s", client["label"])
+```
+
+Current repo plugins:
+
+- `plugins/STORE_FORWARD_APP.handler.py` provides a host-side store-and-forward extension that can answer both local proxy requests and mesh-originated requests.
+- `plugins/TEXT_MESSAGE_APP.handler.py` persists text packets into plugin storage and supplies the replay history used by `STORE_FORWARD_APP`.

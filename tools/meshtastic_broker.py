@@ -113,12 +113,19 @@ def control_denied_message(owner_label: str) -> bytes:
 class BrokerDecision:
     serial_chunks: list[bytes] = field(default_factory=list)
     direct_chunks: list[bytes] = field(default_factory=list)
+    forwarded_frames: list[bytes] = field(default_factory=list)
 
 
 @dataclass
 class BrokerClientState:
     label: str
     parser: FrameParser = field(default_factory=FrameParser)
+
+
+@dataclass
+class ObservedRadioFrame:
+    frame: bytes
+    message: mesh_pb2.FromRadio
 
 
 class MeshtasticBroker:
@@ -167,15 +174,17 @@ class MeshtasticBroker:
         for frame in parsed.frames:
             if self._should_forward_frame(client_id, frame):
                 decision.serial_chunks.append(frame)
+                decision.forwarded_frames.append(frame)
             else:
                 owner_label = self._owner_label()
                 decision.direct_chunks.append(control_denied_message(owner_label))
 
         return decision
 
-    def observe_radio_bytes(self, data: bytes) -> None:
+    def observe_radio_bytes(self, data: bytes) -> list[ObservedRadioFrame]:
         self._expire_control_owner_if_needed()
         parsed = self.radio_parser.feed(data)
+        observed: list[ObservedRadioFrame] = []
         for frame in parsed.frames:
             try:
                 message = decode_fromradio_frame(frame)
@@ -183,6 +192,8 @@ class MeshtasticBroker:
                 self.logger.debug("ignoring undecodable radio frame: %s", exc)
                 continue
             self._observe_fromradio(message)
+            observed.append(ObservedRadioFrame(frame=frame, message=message))
+        return observed
 
     def _observe_fromradio(self, message: mesh_pb2.FromRadio) -> None:
         if not message.HasField("packet"):

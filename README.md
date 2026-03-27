@@ -235,6 +235,40 @@ The `neighbors` view provides a live RF snapshot of peers with SNR data, includi
 
 The wrapper also exposes `telemetry`, which delegates to `status telemetry`. The default mode is an active request/response poll of nearby nodes. `telemetry cached ...` only prints telemetry the local node has already learned in the background. Both modes target the closest direct neighbors first using hop count and SNR; `--include-multihop` lets them continue to farther nodes if you want a wider sweep.
 
+## Proxy Plugins
+
+The proxy now supports hot-reloaded protocol plugins from the repo-local `plugins/` directory.
+
+Plugin filename convention:
+
+- `plugins/STORE_FORWARD_APP.handler.py`
+- `plugins/65.handler.py`
+
+The proxy checks for both the symbolic Meshtastic port name and the numeric port number. Matching plugins are reloaded automatically when the file changes, so handler development does not require restarting the proxy.
+
+Supported plugin entry points:
+
+- `handle_packet(event, api)` for radio-to-client traffic seen from the attached node
+- `handle_client_call(event, api)` for client-to-radio packet writes forwarded through the proxy
+- `tick(event, api)` for periodic housekeeping, polling, or maintenance work
+
+The `event` argument includes decoded protobuf messages, raw framed bytes, payload bytes, packet IDs, source and destination node IDs, response flags, client metadata where relevant, and a `plugin_origin_likely` hint for loop avoidance.
+
+The `api` dictionary exposes host-extension helpers including:
+
+- `send_app(destination=..., portnum=..., payload=..., want_response=False)` to emit a mesh app packet through the attached node
+- `reply_app(event, payload=..., portnum=...)` to reply either to a proxy client or to a mesh-originated packet
+- `send_mesh_packet`, `send_toradio`, `send_fromradio`, `send_client`, `broadcast_bytes`
+- `plugin_store_append_jsonl`, `plugin_store_read_jsonl`, and `plugin_store_path` for durable plugin state under the proxy runtime directory
+- `status_snapshot`, `list_clients`, `mesh_pb2`, `portnums_pb2`, and `storeforward_pb2`
+
+Handler failures are isolated from the proxy data path. Exceptions are logged and the proxy continues forwarding traffic.
+
+The repo now includes a first built-in protocol plugin pair:
+
+- `plugins/STORE_FORWARD_APP.handler.py` answers store-and-forward ping, stats, and history requests for both local proxy clients and mesh-originated packets
+- `plugins/TEXT_MESSAGE_APP.handler.py` persists observed text packets and feeds the message history used by that store-and-forward handler
+
 ## Protocol Logger
 
 The long-running proxy/broker does relay realtime traffic, but it does not persist decoded events by itself. For continuous archival of messages, telemetry, node updates, connection transitions, and other protocol-level events, run the protocol logger as a separate client:
