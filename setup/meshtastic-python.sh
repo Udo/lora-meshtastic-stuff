@@ -138,9 +138,15 @@ ensure_python() {
   fi
 }
 
+venv_is_healthy() {
+  [[ -x "${VENV_DIR}/bin/python" ]] || return 1
+  "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1
+}
+
 ensure_venv() {
   ensure_python
-  if [[ ! -d "${VENV_DIR}" ]]; then
+  if ! venv_is_healthy; then
+    rm -rf "${VENV_DIR}"
     python3 -m venv "${VENV_DIR}"
   fi
 }

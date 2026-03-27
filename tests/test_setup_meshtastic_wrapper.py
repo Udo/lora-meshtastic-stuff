@@ -28,6 +28,42 @@ class MeshtasticSetupWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "ready\n")
 
+        def test_ensure_venv_recreates_broken_environment(self) -> None:
+                result = run_wrapper_snippet(
+                        """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+VENV_DIR="$tmpdir/.venv"
+mkdir -p "$VENV_DIR/bin"
+cat > "$VENV_DIR/bin/python" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$VENV_DIR/bin/python"
+python3() {
+    if [[ "$1" == "-m" && "$2" == "venv" ]]; then
+        mkdir -p "$3/bin"
+        cat > "$3/bin/python" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-m" && "$2" == "pip" && "$3" == "--version" ]]; then
+    echo pip-ok
+    exit 0
+fi
+exit 1
+EOF
+        chmod +x "$3/bin/python"
+        return 0
+    fi
+    return 1
+}
+ensure_venv
+"$VENV_DIR/bin/python" -m pip --version
+"""
+                )
+
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                self.assertIn("pip-ok\n", result.stdout)
+
     def test_main_forwards_autostart_scope_arguments(self) -> None:
         result = run_wrapper_snippet(
             """
