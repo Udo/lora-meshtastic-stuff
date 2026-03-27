@@ -29,7 +29,7 @@
 ## Architecture
 
 - Entry point: `tools/meshtastic_monitor.py`.
-- Transport resolution: `tools/_meshtastic_common.py` via `resolve_meshtastic_target()`.
+- Transport resolution and shared connection/error helpers live in `tools/_meshtastic_common.py`.
 - Event source:
   - subscribes to Meshtastic pubsub topics before connecting.
   - TCP mode uses an already-connected `TCPInterface` so connection events are captured correctly.

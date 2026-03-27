@@ -13,6 +13,8 @@ from _meshtastic_common import (
     DEFAULT_SERIAL_PORT,
     DEFAULT_TCP_PORT,
     Palette,
+    connect_interface_for_target,
+    connection_error_message,
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
@@ -262,9 +264,13 @@ class Monitor:
         return self.target.label
 
     def connect_interface(self):
-        if self.target.mode == "tcp":
-            return TCPInterface(self.target.host, portNumber=self.target.tcp_port, connectNow=True)
-        return SerialInterface(self.target.serial_port, connectNow=False)
+        return connect_interface_for_target(
+            self.target,
+            serial_factory=SerialInterface,
+            tcp_factory=TCPInterface,
+            serial_connect_now=False,
+            tcp_connect_now=True,
+        )
 
     def run(self) -> int:
         signal.signal(signal.SIGINT, self.request_stop)
@@ -279,14 +285,7 @@ class Monitor:
             try:
                 self.interface = self.connect_interface()
             except (SerialException, OSError, socket.error) as exc:
-                if self.target.mode == "tcp":
-                    print(f"Could not connect to {self.target.host}:{self.target.tcp_port}: {exc}.", file=sys.stderr)
-                else:
-                    print(
-                        f"Could not open {self.target.serial_port}: {exc}. "
-                        "Another process is probably using the Meshtastic serial port.",
-                        file=sys.stderr,
-                    )
+                print(connection_error_message(self.target, exc), file=sys.stderr)
                 return 1
             if self.target.mode != "tcp":
                 self.interface.connect()

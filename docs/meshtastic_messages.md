@@ -9,6 +9,8 @@
 ./setup/meshtastic-python.sh messages sync mesh-chat --scope private
 ./setup/meshtastic-python.sh messages tail mesh-chat --lines 20 --follow
 ./setup/meshtastic-python.sh messages grep mesh-chat 'scope="private"' --count
+./setup/meshtastic-python.sh messages stats
+./setup/meshtastic-python.sh messages stats mesh-chat
 ./setup/meshtastic-python.sh messages prune --days 14 --dry-run
 /home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_messages.py sync mesh-chat --timeout 30
 ```
@@ -19,7 +21,7 @@
 - Resolves transport the same way as the other repo tools: explicit `--host`, then `MESHTASTIC_HOST`, then a healthy local proxy or broker, then serial fallback.
 - Appends grep-friendly single-line transcripts to `~/.local/log/meshtastic/<logname>.log`.
 - Records live public `TEXT_MESSAGE_APP` traffic and private `PRIVATE_APP` traffic while `sync` is running.
-- Provides `tail`, `grep`, and `prune` subcommands for transcript inspection and cleanup without touching the radio.
+- Provides `tail`, `grep`, `stats`, and `prune` subcommands for transcript inspection and cleanup without touching the radio.
 
 ## Log Format
 
@@ -30,6 +32,8 @@
 - `MESHTASTIC_LOG_DIR` changes the default transcript directory globally, and `--log-dir` overrides it for one command.
 - `tail --follow` continues streaming appended lines until interrupted, or until `--follow-seconds` expires.
 - `grep --count` prints only the number of matching lines.
+- `stats` prints a compact summary over one transcript log or all transcript logs in the selected directory.
+- `stats` skips malformed transcript lines and reports how many were ignored, instead of failing the entire summary.
 - `prune --days N` deletes `.log` files older than `N` days from the selected transcript directory.
 
 ## Troubleshooting
@@ -39,6 +43,7 @@
 - If serial mode fails because the port is busy, start the local proxy and let the wrapper auto-route through it.
 - Log names must be simple file names like `messages`, `mesh-chat`, or `worms-dm`; path separators are rejected on purpose.
 - `tail` and `grep` require the transcript file to exist already; run `send` or `sync` first if the log has not been created yet.
+- `stats` without a log name requires at least one `*.log` file in the selected transcript directory.
 - `prune` only touches `.log` files in the selected transcript directory. Use `--dry-run` before destructive cleanup if you want to inspect the targets first.
 
 ## Architecture
@@ -48,4 +53,5 @@
 - Send path: resolves the peer from the current NodeDB snapshot, sends with Meshtastic `PRIVATE_APP`, then appends the transmitted line to the chosen log.
 - Sync path: subscribes to Meshtastic pubsub receive topics and writes only public text and private payload packets.
 - Transcript path selection: `--log-dir`, then `MESHTASTIC_LOG_DIR`, then `~/.local/log/meshtastic`.
-- Transcript maintenance: `tail` and `grep` work on existing transcript files, and `prune` deletes old `*.log` files by modification time.
+- Shared connection setup and transport-specific error messages come from `tools/_meshtastic_common.py`.
+- Transcript maintenance: `tail`, `grep`, and `stats` work on existing transcript files, malformed lines are skipped during stats aggregation, and `prune` deletes old `*.log` files by modification time.

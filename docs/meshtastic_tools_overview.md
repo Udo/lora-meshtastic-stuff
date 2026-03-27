@@ -34,6 +34,7 @@
 ## Architecture
 
 - Shared target resolution lives in `tools/_meshtastic_common.py`.
+- Shared transport connection setup and connection error formatting also live in `tools/_meshtastic_common.py`.
 - The wrapper and direct tools all follow the same transport precedence: explicit host, `MESHTASTIC_HOST`, healthy local proxy, then serial fallback.
 - The proxy owns `/dev/ttyUSB0` once and exports a Meshtastic-compatible TCP stream on `127.0.0.1:4403` by default.
 - On Linux, that proxy can be promoted from an ad hoc background process to a systemd user service managed by the wrapper.

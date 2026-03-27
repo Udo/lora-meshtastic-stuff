@@ -12,6 +12,8 @@ from _meshtastic_common import (
     DEFAULT_TCP_PORT,
     Palette,
     VENV_PYTHON,
+    connect_interface_for_target,
+    connection_error_message,
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
@@ -273,21 +275,6 @@ def render_traceroute(target, dest: str) -> int:
     return run_cli(["--port", target.serial_port, "--traceroute", dest, "--timeout", "60", "--no-nodes"])
 
 
-def connect_interface(target):
-    if target.mode == "tcp":
-        return TCPInterface(target.host, portNumber=target.tcp_port)
-    return SerialInterface(target.serial_port)
-
-
-def connection_error_message(target, exc: Exception) -> str:
-    if target.mode == "tcp":
-        return f"Could not connect to {target.host}:{target.tcp_port}: {exc}."
-    return (
-        f"Could not open {target.serial_port}: {exc}. "
-        "Another process is probably using the Meshtastic serial port."
-    )
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pretty Meshtastic status tool")
     parser.add_argument("--port", default=DEFAULT_SERIAL_PORT, help="Serial port for direct device access if no proxy or --host is used")
@@ -322,7 +309,7 @@ def main() -> int:
         return render_traceroute(target, args.dest)
 
     try:
-        iface = connect_interface(target)
+        iface = connect_interface_for_target(target, serial_factory=SerialInterface, tcp_factory=TCPInterface)
     except (SerialException, OSError, socket.error) as exc:
         print(connection_error_message(target, exc), file=sys.stderr)
         return 1

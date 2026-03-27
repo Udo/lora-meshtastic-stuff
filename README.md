@@ -240,6 +240,8 @@ Examples:
 ./setup/meshtastic-python.sh messages sync mesh-chat --scope private
 ./setup/meshtastic-python.sh messages tail mesh-chat --lines 20 --follow
 ./setup/meshtastic-python.sh messages grep mesh-chat 'scope="private"' --count
+./setup/meshtastic-python.sh messages stats
+./setup/meshtastic-python.sh messages stats mesh-chat
 ./setup/meshtastic-python.sh messages prune --days 14 --dry-run
 tools/meshtastic_messages.py sync mesh-chat --timeout 30
 ```
@@ -248,10 +250,12 @@ Notes:
 
 - `messages send` resolves peers by node ID, short name, long name, or a unique prefix from the current NodeDB snapshot and sends on Meshtastic `PRIVATE_APP`.
 - `messages sync` records live public and private text traffic that arrives while it is connected; it does not backfill old traffic from before the process started.
-- `messages tail`, `messages grep`, and `messages prune` are file-only helpers for inspecting and cleaning transcript logs without opening a radio connection.
+- `messages tail`, `messages grep`, `messages stats`, and `messages prune` are file-only helpers for inspecting and cleaning transcript logs without opening a radio connection.
 - Logs are appended to `~/.local/log/meshtastic/<logname>.log` using single-line key-value records so they stay easy to grep.
 - Set `MESHTASTIC_LOG_DIR` if you want the transcript files somewhere else, or use `tools/meshtastic_messages.py --log-dir /path/...` for a one-off override.
 - `messages tail --follow` behaves like `tail -f`, and `messages grep --count` prints only the number of matching lines.
+- `messages stats` prints a small summary over one transcript log or, if no log name is provided, all transcript logs in the selected directory.
+- `messages stats` skips malformed transcript lines instead of aborting the whole summary and reports how many were ignored.
 - `messages prune --days N` removes `.log` files older than `N` days; start with `--dry-run` if you want to inspect the candidates first.
 - The tool follows the same transport selection order as `status` and `monitor`, so it will automatically use the local proxy or broker when one is healthy.
 

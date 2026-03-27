@@ -30,7 +30,7 @@
 ## Architecture
 
 - Entry point: `tools/meshtastic_status.py`.
-- Transport resolution: `tools/_meshtastic_common.py` via `resolve_meshtastic_target()`.
+- Transport resolution and shared connection/error helpers live in `tools/_meshtastic_common.py`.
 - Runtime connection path:
   - TCP mode uses `meshtastic.tcp_interface.TCPInterface`.
   - Serial mode uses `meshtastic.serial_interface.SerialInterface`.

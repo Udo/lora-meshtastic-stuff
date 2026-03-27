@@ -107,6 +107,37 @@ def interface_target(interface: object) -> str:
     return "-"
 
 
+def connect_interface_for_target(
+    target,
+    *,
+    serial_factory=None,
+    tcp_factory=None,
+    serial_connect_now: bool = True,
+    tcp_connect_now: bool = True,
+):
+    if target.mode == "tcp":
+        if tcp_factory is None:
+            from meshtastic.tcp_interface import TCPInterface
+
+            tcp_factory = TCPInterface
+        return tcp_factory(target.host, portNumber=target.tcp_port, connectNow=tcp_connect_now)
+
+    if serial_factory is None:
+        from meshtastic.serial_interface import SerialInterface
+
+        serial_factory = SerialInterface
+    return serial_factory(target.serial_port, connectNow=serial_connect_now)
+
+
+def connection_error_message(target, exc: Exception) -> str:
+    if target.mode == "tcp":
+        return f"Could not connect to {target.host}:{target.tcp_port}: {exc}."
+    return (
+        f"Could not open {target.serial_port}: {exc}. "
+        "Another process is probably using the Meshtastic serial port."
+    )
+
+
 @dataclass(frozen=True)
 class MeshtasticTarget:
     mode: str

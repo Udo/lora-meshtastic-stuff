@@ -3,10 +3,12 @@ import argparse
 import os
 import json
 import re
+import shlex
 import signal
 import socket
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +18,8 @@ from _meshtastic_common import (
     DEFAULT_SERIAL_PORT,
     DEFAULT_TCP_PORT,
     Palette,
+    connect_interface_for_target,
+    connection_error_message,
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
@@ -119,6 +123,112 @@ def grep_lines(lines: list[str], pattern: str, *, ignore_case: bool = False, reg
     return [line for line in lines if pattern in line]
 
 
+def parse_log_line(line: str) -> dict[str, str]:
+    record: dict[str, str] = {}
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        return {"_raw": line, "_parse_error": "invalid shell-style quoting"}
+
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        record[key] = value
+    return record
+
+
+def aggregate_log_records(log_paths: list[Path]) -> dict[str, object]:
+    dir_counts: Counter[str] = Counter()
+    scope_counts: Counter[str] = Counter()
+    peer_counts: Counter[str] = Counter()
+    per_log_counts: dict[str, int] = {}
+    first_ts: str | None = None
+    last_ts: str | None = None
+    malformed_lines = 0
+    total_lines = 0
+
+    for log_path in log_paths:
+        lines = read_log_lines(log_path)
+        per_log_counts[log_path.name] = len(lines)
+        total_lines += len(lines)
+
+        for line in lines:
+            record = parse_log_line(line)
+            if "_parse_error" in record:
+                malformed_lines += 1
+                continue
+
+            direction = record.get("dir") or "unknown"
+            scope = record.get("scope") or "unknown"
+            dir_counts[direction] += 1
+            scope_counts[scope] += 1
+
+            ts = record.get("ts")
+            if ts:
+                if first_ts is None or ts < first_ts:
+                    first_ts = ts
+                if last_ts is None or ts > last_ts:
+                    last_ts = ts
+
+            if direction == "tx":
+                peer = record.get("to_id")
+            elif direction == "rx":
+                peer = record.get("from_id")
+            else:
+                peer = record.get("to_id") or record.get("from_id")
+
+            if peer and peer != "-":
+                peer_counts[peer] += 1
+
+    return {
+        "log_count": len(log_paths),
+        "line_count": total_lines,
+        "dir_counts": dict(dir_counts),
+        "scope_counts": dict(scope_counts),
+        "unique_peers": len(peer_counts),
+        "top_peers": peer_counts.most_common(5),
+        "first_ts": first_ts or "-",
+        "last_ts": last_ts or "-",
+        "malformed_lines": malformed_lines,
+        "per_log_counts": per_log_counts,
+    }
+
+
+def print_stats_summary(summary: dict[str, object]) -> None:
+    print("Transcript Stats")
+    print(f"Logs: {summary['log_count']}")
+    print(f"Lines: {summary['line_count']}")
+    print(f"First entry: {summary['first_ts']}")
+    print(f"Last entry: {summary['last_ts']}")
+    if summary["malformed_lines"]:
+        print(f"Malformed lines skipped: {summary['malformed_lines']}")
+
+    dir_counts = summary["dir_counts"]
+    scope_counts = summary["scope_counts"]
+    print(
+        "Directions: "
+        f"tx={dir_counts.get('tx', 0)} rx={dir_counts.get('rx', 0)} other={dir_counts.get('unknown', 0)}"
+    )
+    print(
+        "Scopes: "
+        f"public={scope_counts.get('public', 0)} private={scope_counts.get('private', 0)} other={scope_counts.get('unknown', 0)}"
+    )
+    print(f"Unique peers: {summary['unique_peers']}")
+
+    top_peers = summary["top_peers"]
+    if top_peers:
+        print("Top peers:")
+        for peer, count in top_peers:
+            print(f"  {peer}: {count}")
+
+    per_log_counts = summary["per_log_counts"]
+    if per_log_counts:
+        print("Per log:")
+        for log_name, count in sorted(per_log_counts.items()):
+            print(f"  {log_name}: {count}")
+
+
 def follow_log(
     log_path: Path,
     emit_line: Callable[[str], None],
@@ -207,21 +317,6 @@ def append_log_line(log_path: Path, line: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(f"{line}\n")
-
-
-def connect_interface(target):
-    if target.mode == "tcp":
-        return TCPInterface(target.host, portNumber=target.tcp_port, connectNow=True)
-    return SerialInterface(target.serial_port, connectNow=False)
-
-
-def connection_error_message(target, exc: Exception) -> str:
-    if target.mode == "tcp":
-        return f"Could not connect to {target.host}:{target.tcp_port}: {exc}."
-    return (
-        f"Could not open {target.serial_port}: {exc}. "
-        "Another process is probably using the Meshtastic serial port."
-    )
 
 
 def node_identity_from_node(node: dict[str, object]) -> NodeIdentity:
@@ -432,6 +527,9 @@ def build_parser() -> argparse.ArgumentParser:
     grep_parser.add_argument("--regex", action="store_true", help="Treat the pattern as a regular expression")
     grep_parser.add_argument("--count", action="store_true", help="Print only the number of matching lines")
 
+    stats_parser = subparsers.add_parser("stats", help="Print a small summary over transcript logs")
+    stats_parser.add_argument("log_name", nargs="?", default="", help="Optional single log name to summarize; defaults to all transcript logs")
+
     prune_parser = subparsers.add_parser("prune", help="Delete old transcript logs from the transcript directory")
     prune_parser.add_argument("--days", type=float, default=30.0, help="Delete logs older than this many days")
     prune_parser.add_argument("--dry-run", action="store_true", help="Show which logs would be removed without deleting them")
@@ -478,7 +576,13 @@ class MessageSync:
         pub.subscribe(self.on_event, pub.ALL_TOPICS)
         try:
             try:
-                self.interface = connect_interface(self.target)
+                self.interface = connect_interface_for_target(
+                    self.target,
+                    serial_factory=SerialInterface,
+                    tcp_factory=TCPInterface,
+                    serial_connect_now=False,
+                    tcp_connect_now=True,
+                )
             except (SerialException, OSError, socket.error) as exc:
                 print(connection_error_message(self.target, exc), file=sys.stderr)
                 return 1
@@ -511,7 +615,13 @@ def send_private_message(args: argparse.Namespace) -> int:
     message_text = " ".join(args.message)
 
     try:
-        iface = connect_interface(target)
+        iface = connect_interface_for_target(
+            target,
+            serial_factory=SerialInterface,
+            tcp_factory=TCPInterface,
+            serial_connect_now=False,
+            tcp_connect_now=True,
+        )
     except (SerialException, OSError, socket.error) as exc:
         print(connection_error_message(target, exc), file=sys.stderr)
         return 1
@@ -608,6 +718,26 @@ def grep_log(args: argparse.Namespace) -> int:
     return 0
 
 
+def stats_logs(args: argparse.Namespace) -> int:
+    log_root = resolve_log_root(args.log_dir)
+    if args.log_name:
+        log_paths = [log_path_for_name(args.log_name, log_root)]
+    else:
+        log_paths = list_log_files(log_root)
+        if not log_paths:
+            print(f"No transcript logs found in {log_root}", file=sys.stderr)
+            return 1
+
+    try:
+        summary = aggregate_log_records(log_paths)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print_stats_summary(summary)
+    return 0
+
+
 def prune_logs(args: argparse.Namespace) -> int:
     log_root = resolve_log_root(args.log_dir)
     older_than_seconds = max(args.days, 0.0) * 86400.0
@@ -641,6 +771,8 @@ def main() -> int:
         return tail_log(args)
     if args.command == "grep":
         return grep_log(args)
+    if args.command == "stats":
+        return stats_logs(args)
     if args.command == "prune":
         return prune_logs(args)
     raise AssertionError(f"Unhandled command: {args.command}")

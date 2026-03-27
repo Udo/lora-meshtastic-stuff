@@ -168,6 +168,62 @@ class MeshtasticMessagesTests(unittest.TestCase):
 
             self.assertEqual([path.name for path in messages.list_log_files(root)], ["a.log", "c.log"])
 
+    def test_parse_log_line_handles_quoted_values(self) -> None:
+        record = messages.parse_log_line('ts="2026-03-27T12:00:00Z" dir="rx" scope="private" text="hello world"')
+
+        self.assertEqual(record["ts"], "2026-03-27T12:00:00Z")
+        self.assertEqual(record["dir"], "rx")
+        self.assertEqual(record["text"], "hello world")
+
+    def test_parse_log_line_marks_malformed_lines(self) -> None:
+        record = messages.parse_log_line('ts="2026-03-27T12:00:00Z" text="unterminated')
+
+        self.assertEqual(record["_parse_error"], "invalid shell-style quoting")
+        self.assertIn("_raw", record)
+
+    def test_aggregate_log_records_summarizes_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            first = root / "first.log"
+            second = root / "second.log"
+            first.write_text(
+                'ts="2026-03-27T12:00:00Z" dir="tx" scope="private" to_id="!a" text="hello"\n'
+                'ts="2026-03-27T12:01:00Z" dir="rx" scope="public" from_id="!b" text="world"\n',
+                encoding="utf-8",
+            )
+            second.write_text(
+                'ts="2026-03-27T12:02:00Z" dir="rx" scope="private" from_id="!a" text="again"\n',
+                encoding="utf-8",
+            )
+
+            summary = messages.aggregate_log_records([first, second])
+
+            self.assertEqual(summary["log_count"], 2)
+            self.assertEqual(summary["line_count"], 3)
+            self.assertEqual(summary["dir_counts"]["rx"], 2)
+            self.assertEqual(summary["scope_counts"]["private"], 2)
+            self.assertEqual(summary["unique_peers"], 2)
+            self.assertEqual(summary["first_ts"], "2026-03-27T12:00:00Z")
+            self.assertEqual(summary["last_ts"], "2026-03-27T12:02:00Z")
+            self.assertEqual(summary["malformed_lines"], 0)
+            self.assertEqual(summary["top_peers"][0], ("!a", 2))
+
+    def test_aggregate_log_records_skips_malformed_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            log_path = root / "messages.log"
+            log_path.write_text(
+                'ts="2026-03-27T12:00:00Z" dir="rx" scope="private" from_id="!a" text="ok"\n'
+                'ts="2026-03-27T12:01:00Z" text="unterminated\n',
+                encoding="utf-8",
+            )
+
+            summary = messages.aggregate_log_records([log_path])
+
+            self.assertEqual(summary["line_count"], 2)
+            self.assertEqual(summary["malformed_lines"], 1)
+            self.assertEqual(summary["dir_counts"]["rx"], 1)
+
     def test_follow_log_emits_newly_appended_lines(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = pathlib.Path(temp_dir) / "follow.log"
