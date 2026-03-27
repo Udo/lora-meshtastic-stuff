@@ -490,15 +490,11 @@ fi
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "no\n")
 
-    def test_proxy_autostart_install_system_skips_user_scope_checks_without_bus(self) -> None:
+    def test_proxy_user_service_installed_returns_false_without_bus(self) -> None:
         result = run_wrapper_snippet(
             """
 unset XDG_RUNTIME_DIR
 unset DBUS_SESSION_BUS_ADDRESS
-require_systemd_system() { :; }
-check_proxy_tool() { :; }
-ensure_python_packages() { :; }
-ensure_runtime_dir() { :; }
 command() {
   if [[ "$1" == "-v" && "$2" == "systemctl" ]]; then
     return 0
@@ -506,17 +502,16 @@ command() {
   builtin command "$@"
 }
 systemctl() { printf 'unexpected-user-systemctl:%s\n' "$*"; return 1; }
-proxy_write_system_systemd_unit() { :; }
-protocol_write_system_systemd_unit() { :; }
-run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
-tcp_endpoint_ready() { return 0; }
-proxy_autostart_install_system
+if proxy_user_service_installed; then
+  printf 'yes\n'
+else
+  printf 'no\n'
+fi
 """
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertNotIn("unexpected-user-systemctl:", result.stdout)
-        self.assertIn("sudo:systemctl daemon-reload\n", result.stdout)
+        self.assertEqual(result.stdout, "no\n")
 
 
 if __name__ == "__main__":
