@@ -64,6 +64,28 @@ ensure_venv
                 self.assertEqual(result.returncode, 0, msg=result.stderr)
                 self.assertIn("pip-ok\n", result.stdout)
 
+        def test_ensure_venv_reports_missing_system_venv_support(self) -> None:
+                result = run_wrapper_snippet(
+                        """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+VENV_DIR="$tmpdir/.venv"
+python3() {
+    if [[ "$1" == "-m" && "$2" == "venv" ]]; then
+        printf 'The virtual environment was not created successfully because ensurepip is not available.\n' >&2
+        return 1
+    fi
+    command python3 "$@"
+}
+ensure_venv
+"""
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("python3 venv support is missing on this system.", result.stderr)
+                self.assertIn("Install python3.", result.stderr)
+                self.assertIn("-venv or python3-venv, then rerun this command.", result.stderr)
+
     def test_main_forwards_autostart_scope_arguments(self) -> None:
         result = run_wrapper_snippet(
             """

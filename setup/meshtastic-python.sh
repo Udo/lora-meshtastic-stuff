@@ -138,6 +138,38 @@ ensure_python() {
   fi
 }
 
+python_venv_package_hint() {
+  python3 - <<'PY'
+import sys
+
+major = sys.version_info.major
+minor = sys.version_info.minor
+print(f"python{major}.{minor}-venv")
+PY
+}
+
+create_venv() {
+  local error_log package_hint
+
+  error_log="$(mktemp)"
+  if python3 -m venv "${VENV_DIR}" 2>"${error_log}"; then
+    rm -f "${error_log}"
+    return 0
+  fi
+
+  rm -rf "${VENV_DIR}"
+  package_hint="$(python_venv_package_hint)"
+
+  if grep -Eqi 'ensurepip is not available|No module named ensurepip' "${error_log}"; then
+    print_error "python3 venv support is missing on this system."
+    print_error "Install ${package_hint} or python3-venv, then rerun this command."
+  fi
+
+  cat "${error_log}" >&2
+  rm -f "${error_log}"
+  exit 1
+}
+
 venv_is_healthy() {
   [[ -x "${VENV_DIR}/bin/python" ]] || return 1
   "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1
@@ -147,7 +179,7 @@ ensure_venv() {
   ensure_python
   if ! venv_is_healthy; then
     rm -rf "${VENV_DIR}"
-    python3 -m venv "${VENV_DIR}"
+    create_venv
   fi
 }
 
