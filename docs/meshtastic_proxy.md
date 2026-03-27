@@ -12,7 +12,7 @@
 ./setup/meshtastic-python.sh proxy-autostart-status
 ./setup/meshtastic-python.sh proxy-log
 ./setup/meshtastic-python.sh proxy-stop
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_proxy.py --serial-port /dev/ttyUSB0 --listen-host 127.0.0.1 --listen-port 4403 --status-file .runtime/meshtastic/proxy-status.json
+./.venv/bin/python tools/meshtastic_proxy.py --serial-port "\$MESHTASTIC_PORT" --listen-host 127.0.0.1 --listen-port 4403 --status-file .runtime/meshtastic/proxy-status.json
 ```
 
 ## Function
@@ -20,6 +20,7 @@
 - Owns the single Meshtastic serial device and exposes a Meshtastic-compatible TCP endpoint for local clients.
 - Broadcasts radio output to all connected TCP clients.
 - Delegates client-to-radio arbitration to `meshtastic_broker.py`.
+- When started through the wrapper, it auto-starts the `meshtastic_protocol.py` sidecar so a historical archive is collected automatically.
 - Writes a status snapshot JSON file used by wrappers and direct tools for auto-detection, health checks, and debugging.
 - Exports broker lease state including whether the current control owner has a confirmed admin session and how long that lease has left.
 - On Linux, can be installed as a systemd user service for automatic startup with logs sent to journald or syslog-compatible collectors.

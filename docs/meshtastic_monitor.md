@@ -8,8 +8,8 @@
 ./setup/meshtastic-python.sh monitor --only connection,node
 ./setup/meshtastic-python.sh monitor --exclude log,routing
 ./setup/meshtastic-python.sh monitor --log-file logs/meshtastic-monitor.log
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_monitor.py --only connection
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_monitor.py --host 127.0.0.1 --tcp-port 4403 --json
+./.venv/bin/python tools/meshtastic_monitor.py --only connection
+./.venv/bin/python tools/meshtastic_monitor.py --host 127.0.0.1 --tcp-port 4403 --json
 ```
 
 ## Function

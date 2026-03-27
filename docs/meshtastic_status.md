@@ -11,8 +11,8 @@
 ./setup/meshtastic-python.sh status config lora network
 ./setup/meshtastic-python.sh status raw-info
 ./setup/meshtastic-python.sh status traceroute !0438ca24
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_status.py summary
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_status.py --host 127.0.0.1 --tcp-port 4403 nodes
+./.venv/bin/python tools/meshtastic_status.py summary
+./.venv/bin/python tools/meshtastic_status.py --host 127.0.0.1 --tcp-port 4403 nodes
 ```
 
 ## Function

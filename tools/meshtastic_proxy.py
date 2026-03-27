@@ -283,7 +283,7 @@ class MeshtasticProxy:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Meshtastic serial-to-TCP proxy")
-    parser.add_argument("--serial-port", default=DEFAULT_SERIAL_PORT, help="Serial port to own, default: /dev/ttyUSB0")
+    parser.add_argument("--serial-port", default=DEFAULT_SERIAL_PORT, help="Serial port to own; defaults to the OS-specific Meshtastic serial port")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--listen-host", default=DEFAULT_TCP_HOST, help="TCP host to bind")
     parser.add_argument("--listen-port", type=int, default=DEFAULT_TCP_PORT, help="TCP port to bind")

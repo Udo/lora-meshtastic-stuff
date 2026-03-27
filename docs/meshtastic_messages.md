@@ -12,7 +12,7 @@
 ./setup/meshtastic-python.sh messages stats
 ./setup/meshtastic-python.sh messages stats mesh-chat
 ./setup/meshtastic-python.sh messages prune --days 14 --dry-run
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python tools/meshtastic_messages.py sync mesh-chat --timeout 30
+./.venv/bin/python tools/meshtastic_messages.py sync mesh-chat --timeout 30
 ```
 
 ## Function

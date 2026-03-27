@@ -45,6 +45,7 @@ Common commands:
 ./setup/meshtastic-python.sh monitor
 ./setup/meshtastic-python.sh messages send WO67 "hello"
 ./setup/meshtastic-python.sh messages sync mesh-chat
+./setup/meshtastic-python.sh protocol mesh-archive --quiet
 ./setup/meshtastic-python.sh proxy-start
 ./setup/meshtastic-python.sh proxy-status
 ./setup/meshtastic-python.sh proxy-check
@@ -233,6 +234,28 @@ It also reports the configured Meshtastic device role and whether fixed-position
 The `neighbors` view provides a live RF snapshot of peers with SNR data, including direct-neighbor counts and averages, and it skips incomplete NodeDB records instead of crashing on malformed entries.
 
 The wrapper also exposes `telemetry`, which delegates to `status telemetry`. The default mode is an active request/response poll of nearby nodes. `telemetry cached ...` only prints telemetry the local node has already learned in the background. Both modes target the closest direct neighbors first using hop count and SNR; `--include-multihop` lets them continue to farther nodes if you want a wider sweep.
+
+## Protocol Logger
+
+The long-running proxy/broker does relay realtime traffic, but it does not persist decoded events by itself. For continuous archival of messages, telemetry, node updates, connection transitions, and other protocol-level events, run the protocol logger as a separate client:
+
+```bash
+./setup/meshtastic-python.sh proxy-start
+```
+
+Direct invocation works too:
+
+```bash
+tools/meshtastic_protocol.py mesh-archive --quiet
+```
+
+Notes:
+
+- `proxy-start` now auto-starts the protocol logger sidecar, using the default log name `protocol` unless `MESHTASTIC_PROTOCOL_LOG_NAME` is set.
+- Protocol logs use the same transcript directory and single-line key/value storage convention as `messages sync`.
+- The default log file is `~/.local/log/meshtastic/protocol.log`.
+- Use `MESHTASTIC_LOG_DIR` or `--log-dir` the same way you would for `messages`.
+- `protocol` is intended for always-on collection; `messages sync` remains the narrower text-message transcript tool.
 
 ## Messaging Tool
 

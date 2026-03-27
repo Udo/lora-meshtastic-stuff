@@ -232,6 +232,60 @@ main messages send WO67 hello mesh
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "messages:send WO67 hello mesh\n")
 
+    def test_main_dispatches_protocol(self) -> None:
+        result = run_wrapper_snippet(
+            """
+protocol() { printf 'protocol:%s\n' "$*"; }
+main protocol capture --quiet
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "protocol:capture --quiet\n")
+
+    def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
+        result = run_wrapper_snippet(
+            """
+check_proxy_tool() { :; }
+ensure_python_packages() { :; }
+ensure_runtime_dir() { :; }
+proxy_service_installed() { return 1; }
+proxy_is_running() { return 1; }
+check_port() { :; }
+seq() { printf '1\n'; }
+nohup() { return 0; }
+sleep() { :; }
+proxy_is_ready() { return 0; }
+proxy_pid() { printf '123\n'; }
+protocol_start_manual() { printf 'protocol-started\n'; }
+proxy_start
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("protocol-started\n", result.stdout)
+
+    def test_proxy_unit_wants_protocol_service(self) -> None:
+        result = run_wrapper_snippet(
+            """
+proxy_unit_content user
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Wants=meshtastic-protocol.service", result.stdout)
+
+    def test_protocol_unit_is_bound_to_proxy_service(self) -> None:
+        result = run_wrapper_snippet(
+            """
+protocol_unit_content user
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Requires=meshtastic-proxy.service", result.stdout)
+        self.assertIn("PartOf=meshtastic-proxy.service", result.stdout)
+
     def test_main_dispatches_telemetry(self) -> None:
         result = run_wrapper_snippet(
             """
@@ -323,6 +377,7 @@ proxy_system_service_enabled() { return 1; }
 proxy_system_service_active() { return 0; }
 proxy_manual_is_running() { return 1; }
 proxy_write_system_systemd_unit() { :; }
+protocol_write_system_systemd_unit() { :; }
 run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
 tcp_endpoint_ready() { return 0; }
 proxy_autostart_install_system
@@ -349,6 +404,7 @@ proxy_user_service_enabled() { return 1; }
 proxy_user_service_active() { return 0; }
 proxy_manual_is_running() { return 1; }
 proxy_write_user_systemd_unit() { :; }
+protocol_write_user_systemd_unit() { :; }
 systemctl() { printf 'user:%s\\n' "$*"; }
 tcp_endpoint_ready() { return 0; }
 proxy_linger_status() { printf 'yes\\n'; }

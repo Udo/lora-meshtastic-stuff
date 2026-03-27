@@ -8,6 +8,7 @@
 ./setup/meshtastic-python.sh telemetry cached --type environment
 ./setup/meshtastic-python.sh monitor --only connection,node
 ./setup/meshtastic-python.sh messages sync mesh-chat
+./setup/meshtastic-python.sh protocol mesh-archive --quiet
 ./setup/meshtastic-python.sh proxy-start
 ./setup/meshtastic-python.sh console
 ./setup/meshtastic-python.sh target-debug
@@ -20,6 +21,7 @@
 - The wrapper-level `telemetry` command uses `meshtastic_status.py telemetry` for either active polling or cached telemetry display, with direct neighbors preferred over multihop nodes.
 - `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.
 - `meshtastic_messages.py` is the lightweight send-and-transcript tool for private sends plus public/private message logging into `~/.local/log/meshtastic/*.log`, with local `tail` and `grep` helpers for those transcript files.
+- `meshtastic_protocol.py` is the broad protocol/event archivist for long-running message, telemetry, and housekeeping capture into the same transcript directory.
 - `meshtastic_proxy.py` is the long-running serial-owning TCP endpoint that lets multiple local clients share one radio connection.
 - `meshtastic_broker.py` is the frame-aware policy layer inside the proxy that arbitrates mutating control traffic.
 - `setup/meshtastic-python.sh` is the operational wrapper that bootstraps the environment, manages the proxy lifecycle, and routes user-facing commands through the correct target.
@@ -29,6 +31,7 @@
 
 - If anything involving transport selection is unclear, run `./setup/meshtastic-python.sh target-debug` first.
 - If multiple tools need the radio at once, prefer `proxy-start` and let the direct tools auto-detect the healthy local proxy.
+- `proxy-start` auto-starts the protocol logger sidecar, so the long-running shared-UART workflow now archives protocol events by default.
 - If peer lookup is ambiguous, use `./setup/meshtastic-python.sh contacts list` and send to the exact node ID instead of a short prefix.
 - If a tool unexpectedly falls back to serial, inspect `.runtime/meshtastic/proxy-status.json` and confirm the local TCP endpoint is reachable with `proxy-check`.
 - If control writes are denied, inspect `proxy-status --json` for the current owner, whether the lease is confirmed, and how much lease time remains.

@@ -25,18 +25,25 @@ FIRMWARE_INSTALLER="${FIRMWARE_DIR}/device-install.sh"
 STATUS_TOOL="${ROOT_DIR}/tools/meshtastic_status.py"
 MONITOR_TOOL="${ROOT_DIR}/tools/meshtastic_monitor.py"
 MESSAGES_TOOL="${ROOT_DIR}/tools/meshtastic_messages.py"
+PROTOCOL_TOOL="${ROOT_DIR}/tools/meshtastic_protocol.py"
 PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
 RUNTIME_DIR="${ROOT_DIR}/.runtime/meshtastic"
+PROTOCOL_LOG_NAME="${MESHTASTIC_PROTOCOL_LOG_NAME:-protocol}"
 PROXY_PID_FILE="${RUNTIME_DIR}/proxy.pid"
 PROXY_LOG_FILE="${RUNTIME_DIR}/proxy.log"
 PROXY_STATUS_FILE="${RUNTIME_DIR}/proxy-status.json"
+PROTOCOL_PID_FILE="${RUNTIME_DIR}/protocol.pid"
+PROTOCOL_RUNNER_LOG_FILE="${RUNTIME_DIR}/protocol-runner.log"
 PROXY_SYSTEMD_UNIT="meshtastic-proxy.service"
+PROTOCOL_SYSTEMD_UNIT="meshtastic-protocol.service"
 PROXY_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
 PROXY_SYSTEMD_USER_UNIT_FILE="${PROXY_SYSTEMD_USER_DIR}/${PROXY_SYSTEMD_UNIT}"
+PROTOCOL_SYSTEMD_USER_UNIT_FILE="${PROXY_SYSTEMD_USER_DIR}/${PROTOCOL_SYSTEMD_UNIT}"
 PROXY_SYSTEMD_SYSTEM_DIR="/etc/systemd/system"
 PROXY_SYSTEMD_SYSTEM_UNIT_FILE="${PROXY_SYSTEMD_SYSTEM_DIR}/${PROXY_SYSTEMD_UNIT}"
+PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE="${PROXY_SYSTEMD_SYSTEM_DIR}/${PROTOCOL_SYSTEMD_UNIT}"
 
 if [[ -t 1 ]]; then
   COLOR_RESET=$'\033[0m'
@@ -86,6 +93,7 @@ Commands:
   telemetry       Request telemetry from nearby nodes via the status tool
   monitor         Run the continuous Meshtastic event monitor from tools/
   messages        Send private messages, sync transcripts, or inspect logs under ~/.local/log/meshtastic/*.log
+  protocol        Persist protocol-level mesh traffic and housekeeping events under ~/.local/log/meshtastic/*.log
   proxy-start     Start the local Meshtastic serial-to-TCP proxy in the background
   proxy-stop      Stop the local Meshtastic proxy
   proxy-status    Show local Meshtastic proxy status
@@ -388,6 +396,13 @@ check_messages_tool() {
   fi
 }
 
+check_protocol_tool() {
+  if [[ ! -f "${PROTOCOL_TOOL}" ]]; then
+    print_error "Protocol tool not found: ${PROTOCOL_TOOL}"
+    exit 1
+  fi
+}
+
 check_proxy_tool() {
   if [[ ! -f "${PROXY_TOOL}" ]]; then
     print_error "Proxy tool not found: ${PROXY_TOOL}"
@@ -497,6 +512,14 @@ proxy_system_service_installed() {
   [[ -f "${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}" ]]
 }
 
+protocol_user_service_installed() {
+  [[ -f "${PROTOCOL_SYSTEMD_USER_UNIT_FILE}" ]]
+}
+
+protocol_system_service_installed() {
+  [[ -f "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}" ]]
+}
+
 proxy_user_service_active() {
   if ! have_systemctl_user; then
     return 1
@@ -509,6 +532,20 @@ proxy_system_service_active() {
     return 1
   fi
   systemctl is-active --quiet "${PROXY_SYSTEMD_UNIT}"
+}
+
+protocol_user_service_active() {
+  if ! have_systemctl_user; then
+    return 1
+  fi
+  systemctl --user is-active --quiet "${PROTOCOL_SYSTEMD_UNIT}"
+}
+
+protocol_system_service_active() {
+  if ! have_systemctl_system; then
+    return 1
+  fi
+  systemctl is-active --quiet "${PROTOCOL_SYSTEMD_UNIT}"
 }
 
 proxy_user_service_enabled() {
@@ -547,6 +584,12 @@ proxy_manual_pid() {
   fi
 }
 
+protocol_manual_pid() {
+  if [[ -f "${PROTOCOL_PID_FILE}" ]]; then
+    cat "${PROTOCOL_PID_FILE}"
+  fi
+}
+
 proxy_pid() {
   local pid
 
@@ -579,6 +622,59 @@ proxy_manual_is_running() {
 
   rm -f "${PROXY_PID_FILE}"
   return 1
+}
+
+protocol_manual_is_running() {
+  local pid
+  pid="$(protocol_manual_pid || true)"
+
+  if [[ -z "${pid}" ]]; then
+    return 1
+  fi
+
+  if kill -0 "${pid}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  rm -f "${PROTOCOL_PID_FILE}"
+  return 1
+}
+
+protocol_start_manual() {
+  if protocol_manual_is_running; then
+    return 0
+  fi
+
+  nohup "${VENV_PYTHON}" "${PROTOCOL_TOOL}" \
+    --host "${PROXY_CONNECT_HOST}" \
+    --tcp-port "${TCP_PORT}" \
+    "${PROTOCOL_LOG_NAME}" \
+    --quiet \
+    >>"${PROTOCOL_RUNNER_LOG_FILE}" 2>&1 &
+  echo "$!" > "${PROTOCOL_PID_FILE}"
+}
+
+protocol_stop_manual() {
+  local pid
+
+  if ! protocol_manual_is_running; then
+    rm -f "${PROTOCOL_PID_FILE}"
+    return 0
+  fi
+
+  pid="$(protocol_manual_pid)"
+  kill "${pid}" >/dev/null 2>&1 || true
+
+  for _ in $(seq 1 20); do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      rm -f "${PROTOCOL_PID_FILE}"
+      return 0
+    fi
+    sleep 0.25
+  done
+
+  kill -9 "${pid}" >/dev/null 2>&1 || true
+  rm -f "${PROTOCOL_PID_FILE}"
 }
 
 proxy_is_running() {
@@ -672,6 +768,44 @@ proxy_service_stop() {
   esac
 }
 
+protocol_service_start() {
+  local manager
+  manager="$(proxy_installed_manager_label)"
+
+  case "${manager}" in
+    systemd-system)
+      require_systemd_system
+      run_with_sudo systemctl start "${PROTOCOL_SYSTEMD_UNIT}"
+      ;;
+    systemd-user)
+      require_systemd_user
+      systemctl --user start "${PROTOCOL_SYSTEMD_UNIT}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+protocol_service_stop() {
+  local manager
+  manager="$(proxy_manager_label)"
+
+  case "${manager}" in
+    systemd-system)
+      require_systemd_system
+      run_with_sudo systemctl stop "${PROTOCOL_SYSTEMD_UNIT}"
+      ;;
+    systemd-user)
+      require_systemd_user
+      systemctl --user stop "${PROTOCOL_SYSTEMD_UNIT}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 proxy_service_log() {
   local manager
   manager="$(proxy_installed_manager_label)"
@@ -709,6 +843,7 @@ Group=${service_group}"
 [Unit]
 Description=Meshtastic serial-to-TCP proxy and broker
 After=default.target local-fs.target
+Wants=${PROTOCOL_SYSTEMD_UNIT}
 ${extra_unit_lines}
 
 [Service]
@@ -728,6 +863,46 @@ WantedBy=default.target
 EOF
 }
 
+protocol_unit_content() {
+  local scope="${1}"
+  local extra_unit_lines=""
+  local extra_service_lines=""
+
+  if [[ "${scope}" == "system" ]]; then
+    local service_user service_group
+    service_user="$(stat -c '%U' "${ROOT_DIR}")"
+    service_group="$(stat -c '%G' "${ROOT_DIR}")"
+    extra_unit_lines="RequiresMountsFor=${ROOT_DIR}"
+    extra_service_lines="User=${service_user}
+Group=${service_group}"
+  fi
+
+  cat <<EOF
+[Unit]
+Description=Meshtastic protocol logger
+After=${PROXY_SYSTEMD_UNIT}
+Requires=${PROXY_SYSTEMD_UNIT}
+PartOf=${PROXY_SYSTEMD_UNIT}
+${extra_unit_lines}
+
+[Service]
+Type=simple
+WorkingDirectory=${ROOT_DIR}
+${extra_service_lines}
+ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host ${PROXY_CONNECT_HOST} --tcp-port ${TCP_PORT} ${PROTOCOL_LOG_NAME} --quiet
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+Environment=MESHTASTIC_LOG_DIR=${MESHTASTIC_LOG_DIR:-}
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meshtastic-protocol
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
 proxy_write_user_systemd_unit() {
   mkdir -p "${PROXY_SYSTEMD_USER_DIR}"
   proxy_unit_content user > "${PROXY_SYSTEMD_USER_UNIT_FILE}"
@@ -736,6 +911,16 @@ proxy_write_user_systemd_unit() {
 proxy_write_system_systemd_unit() {
   run_with_sudo mkdir -p "${PROXY_SYSTEMD_SYSTEM_DIR}"
   proxy_unit_content system | run_with_sudo tee "${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}" >/dev/null
+}
+
+protocol_write_user_systemd_unit() {
+  mkdir -p "${PROXY_SYSTEMD_USER_DIR}"
+  protocol_unit_content user > "${PROTOCOL_SYSTEMD_USER_UNIT_FILE}"
+}
+
+protocol_write_system_systemd_unit() {
+  run_with_sudo mkdir -p "${PROXY_SYSTEMD_SYSTEM_DIR}"
+  protocol_unit_content system | run_with_sudo tee "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}" >/dev/null
 }
 
 proxy_linger_status() {
@@ -768,6 +953,7 @@ proxy_autostart_install_user() {
   fi
 
   proxy_write_user_systemd_unit
+  protocol_write_user_systemd_unit
   systemctl --user daemon-reload
   if [[ "${had_user_service}" == 'yes' ]]; then
     systemctl --user enable "${PROXY_SYSTEMD_UNIT}"
@@ -814,6 +1000,7 @@ proxy_autostart_install_system() {
   fi
 
   proxy_write_system_systemd_unit
+  protocol_write_system_systemd_unit
   run_with_sudo systemctl daemon-reload
   if [[ "${had_system_service}" == 'yes' ]]; then
     run_with_sudo systemctl enable "${PROXY_SYSTEMD_UNIT}"
@@ -841,11 +1028,15 @@ proxy_autostart_remove_user() {
   if proxy_user_service_installed || proxy_user_service_enabled || proxy_user_service_active; then
     systemctl --user disable --now "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
     systemctl --user reset-failed "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+    systemctl --user disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+    systemctl --user reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
   fi
 
   rm -f "${PROXY_SYSTEMD_USER_UNIT_FILE}"
+  rm -f "${PROTOCOL_SYSTEMD_USER_UNIT_FILE}"
   systemctl --user daemon-reload
   rm -f "${PROXY_PID_FILE}"
+  rm -f "${PROTOCOL_PID_FILE}"
   print_success "Proxy autostart removed for systemd user service ${PROXY_SYSTEMD_UNIT}."
 }
 
@@ -855,13 +1046,17 @@ proxy_autostart_remove_system() {
   if proxy_system_service_installed || proxy_system_service_enabled || proxy_system_service_active; then
     run_with_sudo systemctl disable --now "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
     run_with_sudo systemctl reset-failed "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+    run_with_sudo systemctl disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+    run_with_sudo systemctl reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
   fi
 
   if proxy_system_service_installed; then
     run_with_sudo rm -f "${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}"
+    run_with_sudo rm -f "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}"
   fi
   run_with_sudo systemctl daemon-reload
   rm -f "${PROXY_PID_FILE}"
+  rm -f "${PROTOCOL_PID_FILE}"
   print_success "Proxy autostart removed for system-wide service ${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}."
 }
 
@@ -1491,6 +1686,19 @@ messages() {
   fi
 }
 
+protocol() {
+  check_protocol_tool
+  local host
+  host="$(effective_host || true)"
+
+  if [[ -n "${host}" ]]; then
+    run_in_venv python "${PROTOCOL_TOOL}" --host "${host}" --tcp-port "${TCP_PORT}" "$@"
+  else
+    check_port
+    run_in_venv python "${PROTOCOL_TOOL}" --port "${PORT}" "$@"
+  fi
+}
+
 proxy_start() {
   check_proxy_tool
   ensure_python_packages
@@ -1500,6 +1708,7 @@ proxy_start() {
   if proxy_service_installed; then
     service_manager="$(proxy_installed_manager_label)"
     proxy_service_start
+    protocol_service_start || true
 
     for _ in $(seq 1 20); do
       if proxy_is_ready; then
@@ -1515,6 +1724,9 @@ proxy_start() {
 
   if proxy_is_running; then
     print_warn "Proxy already running (pid $(proxy_pid))."
+    if ! protocol_manual_is_running; then
+      protocol_start_manual
+    fi
     return 0
   fi
 
@@ -1530,6 +1742,7 @@ proxy_start() {
 
   for _ in $(seq 1 20); do
     if proxy_is_ready; then
+      protocol_start_manual
       print_success "Proxy started on ${PROXY_BIND_HOST}:${TCP_PORT} for ${PORT} (pid $(proxy_pid))."
       return 0
     fi
@@ -1585,6 +1798,7 @@ proxy_stop() {
 
   if proxy_service_active; then
     service_manager="$(proxy_manager_label)"
+    protocol_service_stop || true
     proxy_service_stop
     print_success "Proxy stopped via ${service_manager} service ${PROXY_SYSTEMD_UNIT}."
     return 0
@@ -1596,6 +1810,7 @@ proxy_stop() {
   fi
 
   pid="$(proxy_pid)"
+  protocol_stop_manual
   kill "${pid}" >/dev/null 2>&1 || true
 
   for _ in $(seq 1 20); do
@@ -1957,6 +2172,10 @@ main() {
     messages)
       shift
       messages "$@"
+      ;;
+    protocol)
+      shift
+      protocol "$@"
       ;;
     proxy-start)
       proxy_start

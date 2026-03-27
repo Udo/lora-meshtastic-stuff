@@ -3,7 +3,7 @@
 ## Usage
 
 ```bash
-/home/udo/work/lora-meshtastic-stuff/.venv/bin/python -m unittest tests.test_meshtastic_broker
+./.venv/bin/python -m unittest tests.test_meshtastic_broker
 ```
 
 This module is not intended as a standalone CLI. It is consumed by `tools/meshtastic_proxy.py`.
