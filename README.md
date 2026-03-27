@@ -194,6 +194,7 @@ Examples:
 ```bash
 ./setup/meshtastic-python.sh status summary
 ./setup/meshtastic-python.sh status nodes
+./setup/meshtastic-python.sh status neighbors
 ./setup/meshtastic-python.sh status config lora network
 ./setup/meshtastic-python.sh status raw-info
 ./setup/meshtastic-python.sh status traceroute !0438ca24
@@ -221,6 +222,8 @@ Notes:
 The summary view now reports the modem preset explicitly, even when the device is using the protobuf default enum value such as `LONG_FAST`.
 
 It also reports the configured Meshtastic device role and whether fixed-position mode is enabled, including the current coordinates when the node is advertising them.
+
+The `neighbors` view provides a live RF snapshot of peers with SNR data, including direct-neighbor counts and averages, and it skips incomplete NodeDB records instead of crashing on malformed entries.
 
 ## Monitor Tool
 

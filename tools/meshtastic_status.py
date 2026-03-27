@@ -4,6 +4,7 @@ import json
 import socket
 import subprocess
 import sys
+from statistics import mean
 from pathlib import Path
 
 from _meshtastic_common import (
@@ -196,6 +197,55 @@ def render_nodes(iface) -> None:
         )
 
 
+def collect_neighbor_rows(iface) -> list[dict[str, object]]:
+    local_num = iface.myInfo.my_node_num
+    rows: list[dict[str, object]] = []
+
+    for node in iface.nodes.values():
+        if node.get("num") == local_num:
+            continue
+
+        snr = node.get("snr")
+        try:
+            snr_value = float(snr)
+        except (TypeError, ValueError):
+            continue
+
+        user = node.get("user", {})
+        rows.append(
+            {
+                "id": user.get("id", "-"),
+                "name": user.get("shortName") or user.get("longName") or "-",
+                "snr": snr_value,
+                "hops": node.get("hopsAway"),
+            }
+        )
+
+    rows.sort(key=lambda item: item["snr"], reverse=True)
+    return rows
+
+
+def render_neighbors(iface) -> None:
+    rows = collect_neighbor_rows(iface)
+    direct = [row for row in rows if row.get("hops") == 0]
+
+    heading("Neighbor Signals")
+    kv("Neighbors with SNR", len(rows))
+    kv("Direct neighbors", len(direct))
+    if rows:
+        kv("Average SNR", f"{mean(row['snr'] for row in rows):.2f} dB")
+        kv("Top 5 avg SNR", f"{mean(row['snr'] for row in rows[:5]):.2f} dB")
+    if direct:
+        kv("Direct avg SNR", f"{mean(row['snr'] for row in direct):.2f} dB")
+
+    header = f"{'ID':<12} {'Name':<12} {'SNR':>8} {'Hops':>6}"
+    print(style(PALETTE, PALETTE.bold, header))
+    for row in rows[:15]:
+        hops = row.get("hops")
+        hops_display = "-" if hops is None else str(hops)
+        print(f"{row['id']:<12} {str(row['name']):12.12} {row['snr']:>8.2f} {hops_display:>6}")
+
+
 def run_cli(args: list[str]) -> int:
     python_exe = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     command = [python_exe, "-m", "meshtastic", *args]
@@ -251,6 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_parser.add_argument("sections", nargs="*", help="Optional config sections such as lora, network, telemetry")
 
     subparsers.add_parser("nodes", help="Show known nodes in a compact table")
+    subparsers.add_parser("neighbors", help="Show neighbor signal quality without crashing on incomplete node records")
     subparsers.add_parser("raw-info", help="Show raw CLI info output")
 
     traceroute_parser = subparsers.add_parser("traceroute", help="Run a traceroute via Meshtastic CLI")
@@ -282,6 +333,8 @@ def main() -> int:
             render_config(iface, args.sections)
         elif command == "nodes":
             render_nodes(iface)
+        elif command == "neighbors":
+            render_neighbors(iface)
         else:
             parser.error(f"Unknown command: {command}")
     finally:

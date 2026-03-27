@@ -1,4 +1,5 @@
 import pathlib
+import re
 import subprocess
 import unittest
 
@@ -22,6 +23,17 @@ source {SCRIPT_PATH}
 
 
 class MeshtasticSetupWrapperTests(unittest.TestCase):
+    def test_embedded_python_blocks_compile(self) -> None:
+        script_text = SCRIPT_PATH.read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", script_text, re.DOTALL)
+
+        self.assertGreater(len(blocks), 0)
+        for index, block in enumerate(blocks, start=1):
+            try:
+                compile(block, f"{SCRIPT_PATH.name}:heredoc:{index}", "exec")
+            except SyntaxError as exc:
+                self.fail(f"Embedded Python heredoc {index} does not compile: {exc}")
+
     def test_wrapper_can_be_sourced_without_running_dispatch(self) -> None:
         result = run_wrapper_snippet("printf 'ready\\n'")
 
