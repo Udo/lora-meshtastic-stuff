@@ -443,6 +443,7 @@ is_linux() {
 have_systemctl_user() {
   is_linux || return 1
   command -v systemctl >/dev/null 2>&1 || return 1
+  [[ -n "${XDG_RUNTIME_DIR:-}" || -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] || return 1
   systemctl --user --version >/dev/null 2>&1
 }
 

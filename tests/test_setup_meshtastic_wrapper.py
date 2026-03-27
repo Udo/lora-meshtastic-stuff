@@ -378,6 +378,7 @@ proxy_system_service_active() { return 0; }
 proxy_manual_is_running() { return 1; }
 proxy_write_system_systemd_unit() { :; }
 protocol_write_system_systemd_unit() { :; }
+proxy_system_service_active() { return 0; }
 run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
 tcp_endpoint_ready() { return 0; }
 proxy_autostart_install_system
@@ -465,6 +466,57 @@ proxy_status
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Proxy:   stopped\n", result.stdout)
         self.assertIn("  Manager: systemd-user\n", result.stdout)
+
+    def test_have_systemctl_user_requires_user_bus_environment(self) -> None:
+        result = run_wrapper_snippet(
+            """
+command() {
+  if [[ "$1" == "-v" && "$2" == "systemctl" ]]; then
+    return 0
+  fi
+  builtin command "$@"
+}
+systemctl() { printf 'should-not-run\n'; }
+unset XDG_RUNTIME_DIR
+unset DBUS_SESSION_BUS_ADDRESS
+if have_systemctl_user; then
+  printf 'yes\n'
+else
+  printf 'no\n'
+fi
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "no\n")
+
+    def test_proxy_autostart_install_system_skips_user_scope_checks_without_bus(self) -> None:
+        result = run_wrapper_snippet(
+            """
+unset XDG_RUNTIME_DIR
+unset DBUS_SESSION_BUS_ADDRESS
+require_systemd_system() { :; }
+check_proxy_tool() { :; }
+ensure_python_packages() { :; }
+ensure_runtime_dir() { :; }
+command() {
+  if [[ "$1" == "-v" && "$2" == "systemctl" ]]; then
+    return 0
+  fi
+  builtin command "$@"
+}
+systemctl() { printf 'unexpected-user-systemctl:%s\n' "$*"; return 1; }
+proxy_write_system_systemd_unit() { :; }
+protocol_write_system_systemd_unit() { :; }
+run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
+tcp_endpoint_ready() { return 0; }
+proxy_autostart_install_system
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertNotIn("unexpected-user-systemctl:", result.stdout)
+        self.assertIn("sudo:systemctl daemon-reload\n", result.stdout)
 
 
 if __name__ == "__main__":
