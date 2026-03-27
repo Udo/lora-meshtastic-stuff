@@ -711,10 +711,15 @@ proxy_autostart_install_user() {
   check_proxy_tool
   ensure_python_packages
   ensure_runtime_dir
+  local had_user_service='no'
 
   if proxy_system_service_installed || proxy_system_service_enabled || proxy_system_service_active; then
     print_info "Removing conflicting system-wide autostart before installing the user service."
     proxy_autostart_remove_system
+  fi
+
+  if proxy_user_service_installed || proxy_user_service_enabled || proxy_user_service_active; then
+    had_user_service='yes'
   fi
 
   if proxy_manual_is_running; then
@@ -724,7 +729,12 @@ proxy_autostart_install_user() {
 
   proxy_write_user_systemd_unit
   systemctl --user daemon-reload
-  systemctl --user enable --now "${PROXY_SYSTEMD_UNIT}"
+  if [[ "${had_user_service}" == 'yes' ]]; then
+    systemctl --user enable "${PROXY_SYSTEMD_UNIT}"
+    systemctl --user restart "${PROXY_SYSTEMD_UNIT}"
+  else
+    systemctl --user enable --now "${PROXY_SYSTEMD_UNIT}"
+  fi
 
   for _ in $(seq 1 20); do
     if proxy_user_service_active && tcp_endpoint_ready "${PROXY_CONNECT_HOST}" "${TCP_PORT}"; then
@@ -747,10 +757,15 @@ proxy_autostart_install_system() {
   check_proxy_tool
   ensure_python_packages
   ensure_runtime_dir
+  local had_system_service='no'
 
   if proxy_user_service_installed || proxy_user_service_enabled || proxy_user_service_active; then
     print_info "Removing conflicting user-scoped autostart before installing the system service."
     proxy_autostart_remove_user
+  fi
+
+  if proxy_system_service_installed || proxy_system_service_enabled || proxy_system_service_active; then
+    had_system_service='yes'
   fi
 
   if proxy_manual_is_running; then
@@ -760,7 +775,12 @@ proxy_autostart_install_system() {
 
   proxy_write_system_systemd_unit
   run_with_sudo systemctl daemon-reload
-  run_with_sudo systemctl enable --now "${PROXY_SYSTEMD_UNIT}"
+  if [[ "${had_system_service}" == 'yes' ]]; then
+    run_with_sudo systemctl enable "${PROXY_SYSTEMD_UNIT}"
+    run_with_sudo systemctl restart "${PROXY_SYSTEMD_UNIT}"
+  else
+    run_with_sudo systemctl enable --now "${PROXY_SYSTEMD_UNIT}"
+  fi
 
   for _ in $(seq 1 20); do
     if proxy_system_service_active && tcp_endpoint_ready "${PROXY_CONNECT_HOST}" "${TCP_PORT}"; then

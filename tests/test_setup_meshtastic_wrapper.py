@@ -165,6 +165,59 @@ main proxy-autostart-status --system
             "install:--system\nremove:--system\nstatus:--system\n",
         )
 
+    def test_proxy_autostart_install_system_restarts_existing_service(self) -> None:
+        result = run_wrapper_snippet(
+            """
+require_systemd_system() { :; }
+check_proxy_tool() { :; }
+ensure_python_packages() { :; }
+ensure_runtime_dir() { :; }
+proxy_user_service_installed() { return 1; }
+proxy_user_service_enabled() { return 1; }
+proxy_user_service_active() { return 1; }
+proxy_system_service_installed() { return 0; }
+proxy_system_service_enabled() { return 1; }
+proxy_system_service_active() { return 0; }
+proxy_manual_is_running() { return 1; }
+proxy_write_system_systemd_unit() { :; }
+run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
+tcp_endpoint_ready() { return 0; }
+proxy_autostart_install_system
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("sudo:systemctl daemon-reload\n", result.stdout)
+        self.assertIn("sudo:systemctl enable meshtastic-proxy.service\n", result.stdout)
+        self.assertIn("sudo:systemctl restart meshtastic-proxy.service\n", result.stdout)
+
+    def test_proxy_autostart_install_user_restarts_existing_service(self) -> None:
+        result = run_wrapper_snippet(
+            """
+require_systemd_user() { :; }
+check_proxy_tool() { :; }
+ensure_python_packages() { :; }
+ensure_runtime_dir() { :; }
+proxy_system_service_installed() { return 1; }
+proxy_system_service_enabled() { return 1; }
+proxy_system_service_active() { return 1; }
+proxy_user_service_installed() { return 0; }
+proxy_user_service_enabled() { return 1; }
+proxy_user_service_active() { return 0; }
+proxy_manual_is_running() { return 1; }
+proxy_write_user_systemd_unit() { :; }
+systemctl() { printf 'user:%s\\n' "$*"; }
+tcp_endpoint_ready() { return 0; }
+proxy_linger_status() { printf 'yes\\n'; }
+proxy_autostart_install_user
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("user:--user daemon-reload\n", result.stdout)
+        self.assertIn("user:--user enable meshtastic-proxy.service\n", result.stdout)
+        self.assertIn("user:--user restart meshtastic-proxy.service\n", result.stdout)
+
     def test_proxy_service_start_uses_system_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(
             """
