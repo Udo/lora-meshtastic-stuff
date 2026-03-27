@@ -256,6 +256,8 @@ Notes:
 - The default log file is `~/.local/log/meshtastic/protocol.log`.
 - Use `MESHTASTIC_LOG_DIR` or `--log-dir` the same way you would for `messages`.
 - `protocol` is intended for always-on collection; `messages sync` remains the narrower text-message transcript tool.
+- Persistent proxy/protocol service settings now live in `.runtime/meshtastic/service.env`. Reinstalling the systemd unit refreshes the unit file, but preserves that config file instead of silently rewriting the serial port or TCP settings.
+- On first `proxy-autostart-install`, the wrapper now creates `.runtime/meshtastic/service.env`, prints its path, and stops so you can review/edit it before the service units are installed.
 
 ## Messaging Tool
 
@@ -346,6 +348,7 @@ Notes:
 - `proxy-status` also shows broker state such as connected client count, current control-session owner, and allowed/denied control-write counters
 - both `proxy-status --json` and `proxy-check --json` emit machine-readable state derived from the same proxy status snapshot file
 - on Linux, `proxy-autostart-install` installs a systemd user service that enables the proxy or broker automatically and sends logs to journald with the identifier `meshtastic-proxy`
+- the generated proxy and protocol systemd units now read persistent settings from `.runtime/meshtastic/service.env` instead of baking the serial port and TCP values directly into the unit file
 - `proxy-autostart-status` now prints the effective runtime root and proxy status-file path, so it is explicit which checkout the service is pinned to
 - `proxy-log` automatically follows `journalctl --user -u meshtastic-proxy.service -f` when the systemd user service is installed
 - the systemd user service starts automatically after login; to keep it running across reboot before login, enable user lingering with `sudo loginctl enable-linger $USER`

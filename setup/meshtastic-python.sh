@@ -3,10 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/setup/lib/meshtastic-os.sh"
+RUNTIME_DIR="${ROOT_DIR}/.runtime/meshtastic"
+SERVICE_CONFIG_FILE="${RUNTIME_DIR}/service.env"
 VENV_DIR="${ROOT_DIR}/.venv"
 VENV_PYTHON="$(meshtastic_venv_python_path "${VENV_DIR}")"
 VENV_ACTIVATE="$(meshtastic_venv_activate_path "${VENV_DIR}")"
 DEFAULT_SERIAL_PORT="$(meshtastic_default_serial_port)"
+if [[ -f "${SERVICE_CONFIG_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${SERVICE_CONFIG_FILE}"
+fi
 PORT="${MESHTASTIC_PORT:-${DEFAULT_SERIAL_PORT}}"
 BAUD="${MESHTASTIC_BAUD:-115200}"
 HOST="${MESHTASTIC_HOST:-}"
@@ -29,7 +35,6 @@ PROTOCOL_TOOL="${ROOT_DIR}/tools/meshtastic_protocol.py"
 PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
-RUNTIME_DIR="${ROOT_DIR}/.runtime/meshtastic"
 PROTOCOL_LOG_NAME="${MESHTASTIC_PROTOCOL_LOG_NAME:-protocol}"
 PROXY_PID_FILE="${RUNTIME_DIR}/proxy.pid"
 PROXY_LOG_FILE="${RUNTIME_DIR}/proxy.log"
@@ -115,6 +120,7 @@ Environment:
   MESHTASTIC_TCP_PORT Override the TCP port used with MESHTASTIC_HOST or the local proxy (default: 4403)
   MESHTASTIC_PROXY_BIND_HOST Override the local proxy bind host (default: 127.0.0.1)
   MESHTASTIC_PROXY_HOST Override the host wrappers should use when the local proxy is running (default: 127.0.0.1)
+  MESHTASTIC_PROTOCOL_LOG_NAME Override the protocol sidecar log basename (default: protocol)
   MESHTASTIC_BAUD Override the UART baud rate for rawlog (default: 115200)
   MESHTASTIC_LOG_SECONDS Override rawlog capture duration in seconds (default: 20)
   MESHTASTIC_REGION Override the region used by provision (default: EU_868)
@@ -434,6 +440,77 @@ wait_for_port() {
 
 ensure_runtime_dir() {
   mkdir -p "${RUNTIME_DIR}"
+}
+
+service_config_value() {
+  case "${1}" in
+    MESHTASTIC_PORT)
+      printf '%s\n' "${PORT}"
+      ;;
+    MESHTASTIC_BAUD)
+      printf '%s\n' "${BAUD}"
+      ;;
+    MESHTASTIC_TCP_PORT)
+      printf '%s\n' "${TCP_PORT}"
+      ;;
+    MESHTASTIC_PROXY_BIND_HOST)
+      printf '%s\n' "${PROXY_BIND_HOST}"
+      ;;
+    MESHTASTIC_PROXY_HOST)
+      printf '%s\n' "${PROXY_CONNECT_HOST}"
+      ;;
+    MESHTASTIC_PROTOCOL_LOG_NAME)
+      printf '%s\n' "${PROTOCOL_LOG_NAME}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+write_service_config() {
+  ensure_runtime_dir
+  cat > "${SERVICE_CONFIG_FILE}" <<EOF
+MESHTASTIC_PORT=$(printf '%q' "${PORT}")
+MESHTASTIC_BAUD=$(printf '%q' "${BAUD}")
+MESHTASTIC_TCP_PORT=$(printf '%q' "${TCP_PORT}")
+MESHTASTIC_PROXY_BIND_HOST=$(printf '%q' "${PROXY_BIND_HOST}")
+MESHTASTIC_PROXY_HOST=$(printf '%q' "${PROXY_CONNECT_HOST}")
+MESHTASTIC_PROTOCOL_LOG_NAME=$(printf '%q' "${PROTOCOL_LOG_NAME}")
+EOF
+}
+
+ensure_service_config() {
+  ensure_runtime_dir
+  if [[ -f "${SERVICE_CONFIG_FILE}" ]]; then
+    return 1
+  fi
+  write_service_config
+  return 0
+}
+
+warn_if_service_config_differs() {
+  [[ -f "${SERVICE_CONFIG_FILE}" ]] || return 0
+
+  local key configured current drift='no'
+  for key in \
+    MESHTASTIC_PORT \
+    MESHTASTIC_BAUD \
+    MESHTASTIC_TCP_PORT \
+    MESHTASTIC_PROXY_BIND_HOST \
+    MESHTASTIC_PROXY_HOST \
+    MESHTASTIC_PROTOCOL_LOG_NAME; do
+    configured="$(sed -n "s/^${key}=//p" "${SERVICE_CONFIG_FILE}" | head -n1)"
+    current="$(printf '%q' "$(service_config_value "${key}")")"
+    if [[ -n "${configured}" && "${configured}" != "${current}" ]]; then
+      if [[ "${drift}" == 'no' ]]; then
+        print_warn "Existing service config preserved at ${SERVICE_CONFIG_FILE}."
+        print_warn "Current shell settings differ from the persisted service settings:"
+        drift='yes'
+      fi
+      printf '  %s: config=%s shell=%s\n' "${key}" "${configured}" "${current}" >&2
+    fi
+  done
 }
 
 is_linux() {
@@ -851,7 +928,8 @@ ${extra_unit_lines}
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
-ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port ${PORT} --baud ${BAUD} --listen-host ${PROXY_BIND_HOST} --listen-port ${TCP_PORT} --status-file ${PROXY_STATUS_FILE}
+EnvironmentFile=${SERVICE_CONFIG_FILE}
+ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE}
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -890,11 +968,11 @@ ${extra_unit_lines}
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
-ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host ${PROXY_CONNECT_HOST} --tcp-port ${TCP_PORT} ${PROTOCOL_LOG_NAME} --quiet
+EnvironmentFile=${SERVICE_CONFIG_FILE}
+ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host \${MESHTASTIC_PROXY_HOST} --tcp-port \${MESHTASTIC_TCP_PORT} \${MESHTASTIC_PROTOCOL_LOG_NAME} --quiet
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
-Environment=MESHTASTIC_LOG_DIR=${MESHTASTIC_LOG_DIR:-}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=meshtastic-protocol
@@ -935,8 +1013,15 @@ proxy_linger_status() {
 proxy_autostart_install_user() {
   require_systemd_user
   check_proxy_tool
+  check_protocol_tool
   ensure_python_packages
   ensure_runtime_dir
+  if ensure_service_config; then
+    print_warn "Created persistent service config: ${SERVICE_CONFIG_FILE}"
+    print_warn "Review and edit it before re-running proxy-autostart-install."
+    return 0
+  fi
+  warn_if_service_config_differs
   local had_user_service='no'
 
   if proxy_system_service_installed || proxy_system_service_enabled || proxy_system_service_active; then
@@ -967,6 +1052,7 @@ proxy_autostart_install_user() {
     if proxy_user_service_active && tcp_endpoint_ready "${PROXY_CONNECT_HOST}" "${TCP_PORT}"; then
       print_success "Proxy autostart installed via systemd user service ${PROXY_SYSTEMD_UNIT}."
       print_info "Logs: journalctl --user -u ${PROXY_SYSTEMD_UNIT} -f"
+      print_info "Config: ${SERVICE_CONFIG_FILE}"
       if [[ "$(proxy_linger_status || true)" != "yes" ]]; then
         print_warn "This user service starts automatically after login. To keep it running across reboots before login, enable linger with: sudo loginctl enable-linger ${USER}"
       fi
@@ -982,8 +1068,15 @@ proxy_autostart_install_user() {
 proxy_autostart_install_system() {
   require_systemd_system
   check_proxy_tool
+  check_protocol_tool
   ensure_python_packages
   ensure_runtime_dir
+  if ensure_service_config; then
+    print_warn "Created persistent service config: ${SERVICE_CONFIG_FILE}"
+    print_warn "Review and edit it before re-running proxy-autostart-install."
+    return 0
+  fi
+  warn_if_service_config_differs
   local had_system_service='no'
 
   if proxy_user_service_installed || proxy_user_service_enabled || proxy_user_service_active; then
@@ -1014,6 +1107,7 @@ proxy_autostart_install_system() {
     if proxy_system_service_active && tcp_endpoint_ready "${PROXY_CONNECT_HOST}" "${TCP_PORT}"; then
       print_success "Proxy autostart installed via system-wide service ${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}."
       print_info "Logs: journalctl -u ${PROXY_SYSTEMD_UNIT} -f"
+      print_info "Config: ${SERVICE_CONFIG_FILE}"
       return 0
     fi
     sleep 0.25

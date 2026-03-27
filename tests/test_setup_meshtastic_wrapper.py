@@ -367,8 +367,11 @@ doctor
             """
 require_systemd_system() { :; }
 check_proxy_tool() { :; }
+check_protocol_tool() { :; }
 ensure_python_packages() { :; }
 ensure_runtime_dir() { :; }
+ensure_service_config() { return 1; }
+warn_if_service_config_differs() { :; }
 proxy_user_service_installed() { return 1; }
 proxy_user_service_enabled() { return 1; }
 proxy_user_service_active() { return 1; }
@@ -395,8 +398,11 @@ proxy_autostart_install_system
             """
 require_systemd_user() { :; }
 check_proxy_tool() { :; }
+check_protocol_tool() { :; }
 ensure_python_packages() { :; }
 ensure_runtime_dir() { :; }
+ensure_service_config() { return 1; }
+warn_if_service_config_differs() { :; }
 proxy_system_service_installed() { return 1; }
 proxy_system_service_enabled() { return 1; }
 proxy_system_service_active() { return 1; }
@@ -426,6 +432,21 @@ proxy_autostart_install_user
         self.assertIn(f"RequiresMountsFor={REPO_ROOT}\n\n[Service]\n", result.stdout)
         self.assertNotIn("[Service]\nType=simple\nWorkingDirectory", result.stdout.split("RequiresMountsFor=")[-1].split("\n", 1)[0])
 
+    def test_proxy_unit_content_uses_environment_file_and_variable_expansion(self) -> None:
+        result = run_wrapper_snippet("proxy_unit_content user")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn(f"EnvironmentFile={REPO_ROOT}/.runtime/meshtastic/service.env\n", result.stdout)
+        self.assertIn(r"ExecStart=" + f"{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_proxy.py --serial-port ${{MESHTASTIC_PORT}}", result.stdout)
+
+    def test_protocol_unit_content_uses_environment_file_and_variable_expansion(self) -> None:
+        result = run_wrapper_snippet("protocol_unit_content user")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn(f"EnvironmentFile={REPO_ROOT}/.runtime/meshtastic/service.env\n", result.stdout)
+        self.assertIn(r"${MESHTASTIC_PROXY_HOST}", result.stdout)
+        self.assertIn(r"${MESHTASTIC_PROTOCOL_LOG_NAME}", result.stdout)
+
     def test_proxy_service_start_uses_system_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(
             """
@@ -438,6 +459,72 @@ proxy_service_start
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "sudo:systemctl start meshtastic-proxy.service\n")
+
+    def test_ensure_service_config_preserves_existing_values(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+RUNTIME_DIR="$tmpdir/runtime"
+SERVICE_CONFIG_FILE="$RUNTIME_DIR/service.env"
+mkdir -p "$RUNTIME_DIR"
+cat > "$SERVICE_CONFIG_FILE" <<'EOF'
+MESHTASTIC_PORT=/dev/custom0
+EOF
+MESHTASTIC_PORT=/dev/override1
+PORT=/dev/override1
+ensure_service_config || true
+cat "$SERVICE_CONFIG_FILE"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "MESHTASTIC_PORT=/dev/custom0\n")
+
+    def test_ensure_service_config_creates_defaults_when_missing(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+RUNTIME_DIR="$tmpdir/runtime"
+SERVICE_CONFIG_FILE="$RUNTIME_DIR/service.env"
+PORT=/dev/default0
+BAUD=115200
+TCP_PORT=4403
+PROXY_BIND_HOST=127.0.0.1
+PROXY_CONNECT_HOST=127.0.0.1
+PROTOCOL_LOG_NAME=protocol
+if ensure_service_config; then
+  printf 'created\n'
+fi
+cat "$SERVICE_CONFIG_FILE"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("created\n", result.stdout)
+        self.assertIn("MESHTASTIC_PORT=/dev/default0\n", result.stdout)
+
+    def test_proxy_autostart_install_system_stops_after_creating_service_config(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+RUNTIME_DIR="$tmpdir/runtime"
+SERVICE_CONFIG_FILE="$RUNTIME_DIR/service.env"
+require_systemd_system() { :; }
+check_proxy_tool() { :; }
+check_protocol_tool() { :; }
+ensure_python_packages() { :; }
+ensure_runtime_dir() { mkdir -p "$RUNTIME_DIR"; }
+run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
+proxy_autostart_install_system
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Created persistent service config:", result.stdout + result.stderr)
+        self.assertNotIn("sudo:systemctl", result.stdout)
 
     def test_proxy_service_start_uses_user_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(

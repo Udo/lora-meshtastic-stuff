@@ -24,6 +24,8 @@
 - Writes a status snapshot JSON file used by wrappers and direct tools for auto-detection, health checks, and debugging.
 - Exports broker lease state including whether the current control owner has a confirmed admin session and how long that lease has left.
 - On Linux, can be installed as a systemd user service for automatic startup with logs sent to journald or syslog-compatible collectors.
+- Persistent service settings for the Linux autostart units live in `.runtime/meshtastic/service.env`.
+- On first `proxy-autostart-install`, the wrapper creates `.runtime/meshtastic/service.env`, prints its location, and exits so the file can be reviewed before installing the units.
 
 ## Troubleshooting
 
@@ -35,6 +37,7 @@
 - If the Linux autostart service is installed, use `./setup/meshtastic-python.sh proxy-log` or `journalctl --user -u meshtastic-proxy.service -f` instead of tailing the file log.
 - A systemd user service starts after login by default. For startup before login after reboot, enable lingering for the user.
 - `proxy-autostart-status` prints the effective runtime root and proxy status snapshot path so it is obvious which repo checkout the service uses.
+- Re-running `proxy-autostart-install` refreshes the unit files but preserves `.runtime/meshtastic/service.env`; edit that file if the persistent serial port or TCP settings need to change.
 
 ## Architecture
 
@@ -49,3 +52,5 @@
 - State export:
   - status snapshot includes TCP bind data, serial-connected state, broker counters, control owner, lease timing, and latest observed admin session metadata.
   - wrapper JSON output also includes whether the proxy is managed manually or by the `meshtastic-proxy.service` systemd user unit.
+- Service configuration:
+  - systemd units use `EnvironmentFile=.runtime/meshtastic/service.env` for the serial port, bind host, connect host, TCP port, baud rate, and protocol log name.
