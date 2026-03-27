@@ -218,6 +218,14 @@ proxy_autostart_install_user
         self.assertIn("user:--user enable meshtastic-proxy.service\n", result.stdout)
         self.assertIn("user:--user restart meshtastic-proxy.service\n", result.stdout)
 
+    def test_proxy_unit_content_places_requires_mounts_for_in_unit_section(self) -> None:
+        result = run_wrapper_snippet("proxy_unit_content system")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("[Unit]\n", result.stdout)
+        self.assertIn(f"RequiresMountsFor={REPO_ROOT}\n\n[Service]\n", result.stdout)
+        self.assertNotIn("[Service]\nType=simple\nWorkingDirectory", result.stdout.split("RequiresMountsFor=")[-1].split("\n", 1)[0])
+
     def test_proxy_service_start_uses_system_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(
             """

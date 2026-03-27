@@ -203,6 +203,11 @@ class MeshtasticProxy:
                         self.broadcast(chunk)
             except (SerialException, OSError) as exc:
                 LOGGER.warning("serial read failed: %s", exc)
+            except Exception as exc:  # pragma: no cover - defensive recovery for pyserial edge cases
+                if self.stop_event.is_set():
+                    LOGGER.debug("serial reader stopped during shutdown: %s", exc)
+                else:
+                    LOGGER.exception("unexpected serial reader failure, reconnecting: %s", exc)
             finally:
                 self.close_serial()
 

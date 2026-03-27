@@ -57,6 +57,12 @@ def make_admin_read_frame() -> bytes:
     return make_frame(to_radio)
 
 
+def make_want_config_frame() -> bytes:
+    to_radio = mesh_pb2.ToRadio()
+    to_radio.want_config_id = 123456
+    return make_frame(to_radio)
+
+
 def make_text_frame() -> bytes:
     to_radio = mesh_pb2.ToRadio()
     to_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
@@ -113,6 +119,18 @@ class FakeSerialHandle:
         self.closed = True
 
 
+class CrashySerialHandle(FakeSerialHandle):
+    def __init__(self) -> None:
+        super().__init__()
+        self.crashed = False
+
+    def read(self, _size: int) -> bytes:
+        if not self.crashed:
+            self.crashed = True
+            raise TypeError("simulated pyserial disconnect race")
+        return super().read(_size)
+
+
 class LoopbackMeshtasticProxy(MeshtasticProxy):
     def __init__(self, fake_serial: FakeSerialHandle, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -123,6 +141,21 @@ class LoopbackMeshtasticProxy(MeshtasticProxy):
         if self.open_count == 0:
             self.open_count += 1
             return self.fake_serial
+        self.stop_event.wait(0.05)
+        return None
+
+
+class MultiHandleMeshtasticProxy(MeshtasticProxy):
+    def __init__(self, handles: list[FakeSerialHandle | None], *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.handles = handles
+        self.open_count = 0
+
+    def open_serial(self):
+        if self.open_count < len(self.handles):
+            handle = self.handles[self.open_count]
+            self.open_count += 1
+            return handle
         self.stop_event.wait(0.05)
         return None
 
@@ -184,6 +217,23 @@ class MeshtasticBrokerTests(unittest.TestCase):
 
         self.assertEqual(len(result.serial_chunks), 1)
         self.assertEqual(result.direct_chunks, [])
+
+    def test_want_config_handshake_does_not_claim_control_session(self) -> None:
+        result = self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertEqual(result.direct_chunks, [])
+        self.assertIsNone(self.broker.control_owner_id)
+
+    def test_second_client_can_also_send_want_config_handshake(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        result = self.broker.handle_client_bytes("client-b", make_want_config_frame())
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertEqual(result.direct_chunks, [])
+        self.assertIsNone(self.broker.control_owner_id)
+        self.assertEqual(self.broker.denied_control_frames, 0)
 
     def test_non_admin_traffic_is_not_blocked(self) -> None:
         self.broker.handle_client_bytes("client-a", make_admin_write_frame())
@@ -322,6 +372,37 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
                 self.assertEqual(status["forwarded_control_frames"], 1)
                 self.assertEqual(status["serial_connected"], True)
                 self.assertTrue(str(status["control_owner"]).startswith("127.0.0.1:"))
+
+    def test_proxy_recovers_from_unexpected_serial_exception(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            status_file = str(pathlib.Path(temp_dir.name) / "proxy-status.json")
+            crashy = CrashySerialHandle()
+            replacement = FakeSerialHandle()
+            proxy = MultiHandleMeshtasticProxy(
+                handles=[crashy, replacement],
+                serial_port="fake-serial",
+                baudrate=115200,
+                listen_host="127.0.0.1",
+                listen_port=0,
+                reconnect_delay=0.01,
+                status_file=status_file,
+            )
+
+            serial_thread = threading.Thread(target=proxy.serial_reader_loop, daemon=True)
+            serial_thread.start()
+
+            wait_until(lambda: proxy.open_count >= 2)
+            wait_until(lambda: proxy.serial_ready.is_set())
+
+            proxy.stop()
+            serial_thread.join(timeout=1.0)
+
+            self.assertFalse(serial_thread.is_alive())
+            self.assertTrue(crashy.closed)
+            self.assertTrue(replacement.closed)
+        finally:
+            temp_dir.cleanup()
 
 
 if __name__ == "__main__":

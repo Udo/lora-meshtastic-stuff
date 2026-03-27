@@ -655,21 +655,23 @@ proxy_service_log() {
 
 proxy_unit_content() {
   local scope="${1}"
+  local extra_unit_lines=""
   local extra_service_lines=""
 
   if [[ "${scope}" == "system" ]]; then
     local service_user service_group
     service_user="$(stat -c '%U' "${ROOT_DIR}")"
     service_group="$(stat -c '%G' "${ROOT_DIR}")"
+    extra_unit_lines="RequiresMountsFor=${ROOT_DIR}"
     extra_service_lines="User=${service_user}
-Group=${service_group}
-RequiresMountsFor=${ROOT_DIR}"
+Group=${service_group}"
   fi
 
   cat <<EOF
 [Unit]
 Description=Meshtastic serial-to-TCP proxy and broker
 After=default.target local-fs.target
+${extra_unit_lines}
 
 [Service]
 Type=simple

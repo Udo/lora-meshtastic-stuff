@@ -84,7 +84,7 @@ def decode_fromradio_frame(frame: bytes) -> mesh_pb2.FromRadio:
 
 def is_control_request(message: mesh_pb2.ToRadio) -> bool:
     variant = message.WhichOneof("payload_variant")
-    if variant in {"want_config_id", "disconnect", "xmodemPacket"}:
+    if variant in {"disconnect", "xmodemPacket"}:
         return True
     if variant != "packet":
         return False
