@@ -1,1 +1,302 @@
 # lora-meshtastic-stuff
+
+This workspace now contains a verified and reproducible local workflow for a Meshnology N35 / Heltec V3 class ESP32-S3 LoRa board on `/dev/ttyUSB0`.
+
+## Current Device State
+
+- Board family: Heltec V3 compatible (`HELTEC_V3`, ESP32-S3, 8 MB flash)
+- Known-good Meshtastic firmware bundled in this repo: `2.7.13.597fa0b`
+- Known-bad firmware on this board: `2.7.15.567b8ea` bootlooped after a clean flash and has been removed from the repo
+- USB Meshtastic CLI access: working
+- LoRa region: `EU_868`
+- WiFi: not configured yet because LAN credentials were not available during setup
+
+## Local Helper Script
+
+Use [setup/meshtastic-python.sh](setup/meshtastic-python.sh) for repeatable setup and device operations.
+
+The script is now the canonical setup path. It uses the extracted known-good firmware bundle under [docs/firmware/firmware-esp32s3-2.7.13.597fa0b](docs/firmware/firmware-esp32s3-2.7.13.597fa0b).
+
+Common commands:
+
+```bash
+./setup/meshtastic-python.sh bootstrap
+./setup/meshtastic-python.sh flash
+./setup/meshtastic-python.sh provision
+./setup/meshtastic-python.sh guided
+./setup/meshtastic-python.sh probe
+./setup/meshtastic-python.sh nodes
+./setup/meshtastic-python.sh export-config
+./setup/meshtastic-python.sh set-name "My Node" "MYND"
+./setup/meshtastic-python.sh set-role CLIENT
+./setup/meshtastic-python.sh set-region EU_868
+./setup/meshtastic-python.sh set-modem-preset LONG_FAST
+./setup/meshtastic-python.sh set-position 52.5200 13.4050 35
+./setup/meshtastic-python.sh clear-position
+./setup/meshtastic-python.sh set-ham DO1ABC
+./setup/meshtastic-python.sh set-wifi "YOUR_WIFI_SSID" "YOUR_WIFI_PASSWORD"
+./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh monitor
+./setup/meshtastic-python.sh proxy-start
+./setup/meshtastic-python.sh proxy-status
+./setup/meshtastic-python.sh proxy-check
+./setup/meshtastic-python.sh console
+```
+
+## Reproducible Setup
+
+From a fresh checkout, the minimal end-to-end path is:
+
+```bash
+./setup/meshtastic-python.sh bootstrap
+./setup/meshtastic-python.sh provision
+```
+
+That will:
+
+- install the Python tooling used by the repo (`meshtastic`, `esptool`, `pyserial`)
+- flash the repo's known-good `heltec-v3` firmware bundle
+- apply the default region `EU_868`
+- apply the optional owner names from `MESHTASTIC_OWNER_LONG` and `MESHTASTIC_OWNER_SHORT`
+- leave WiFi disabled unless credentials are provided via environment variables
+
+To change the modem preset after provisioning:
+
+```bash
+./setup/meshtastic-python.sh set-modem-preset LONG_FAST
+```
+
+Additional node identity and fixed-position commands:
+
+```bash
+./setup/meshtastic-python.sh set-role CLIENT
+./setup/meshtastic-python.sh set-position 52.5200 13.4050 35
+./setup/meshtastic-python.sh clear-position
+./setup/meshtastic-python.sh set-ham DO1ABC
+```
+
+Notes:
+
+- `set-role` maps to Meshtastic `device.role`, which is the closest thing to a node type.
+- Supported roles are: `CLIENT`, `CLIENT_MUTE`, `ROUTER`, `ROUTER_CLIENT`, `REPEATER`, `TRACKER`, `SENSOR`, `TAK`, `CLIENT_HIDDEN`, `LOST_AND_FOUND`, `TAK_TRACKER`, `ROUTER_LATE`, `CLIENT_BASE`.
+- `set-position` configures a fixed latitude/longitude, with optional altitude in meters, for nodes that do not rely on live GPS.
+- `clear-position` removes any configured fixed position.
+- `set-ham` sets the licensed ham identifier and follows the upstream CLI behavior of disabling encryption.
+
+Meshtastic modem preset quick guide:
+
+- `LONG_FAST`: general-purpose default balance of range and throughput.
+- `LONG_SLOW`: more link budget than `LONG_FAST`, but slower packet airtime.
+- `VERY_LONG_SLOW`: maximum range-oriented preset, with the slowest throughput and longest airtime.
+- `MEDIUM_SLOW`: middle-ground preset that leans toward reliability over speed.
+- `MEDIUM_FAST`: middle-ground preset that leans toward throughput over range.
+- `SHORT_SLOW`: shorter-range preset with conservative signaling.
+- `SHORT_FAST`: shorter-range preset optimized for faster local traffic.
+- `LONG_MODERATE`: long-range preset between `LONG_FAST` and `LONG_SLOW`.
+- `SHORT_TURBO`: highest-speed short-range preset, trading away significant range and robustness.
+- `LONG_TURBO`: faster long-range preset than the slow long-range modes, but still a throughput-over-range tradeoff.
+
+Rule of thumb:
+
+- names starting with `LONG` favor distance and weaker links
+- names starting with `SHORT` favor local throughput
+- `SLOW` increases airtime and usually improves weak-link tolerance
+- `FAST` and `TURBO` reduce airtime and favor speed over range
+
+Use the same preset on nodes that need to talk to each other. Mixing presets on the same channel will generally prevent them from communicating.
+
+Very rough distance expectations by environment:
+
+- These are order-of-magnitude planning numbers, not guarantees.
+- They assume legal regional power, decent antennas, and typical handheld, rooftop, or small fixed-node installs rather than optimized record-attempt setups.
+- Terrain dominates everything: a hill between nodes can kill a link, while ridge-to-ridge or tower-to-tower line-of-sight can improve range by more than an order of magnitude.
+- Meshtastic's published range-test records reach roughly `166 km`, `254 km`, and `331 km`, but those are elevated line-of-sight record conditions, not street-level expectations.
+
+Preset range guide:
+
+| Preset family | Dense urban / indoors | Typical urban / suburban | Rolling hills / ridge assist | Clear elevated line-of-sight |
+| --- | --- | --- | --- | --- |
+| `SHORT_TURBO`, `SHORT_FAST` | `0.1` to `1 km` | `0.5` to `3 km` | `1` to `5 km` | `2` to `10+ km` |
+| `SHORT_SLOW`, `MEDIUM_FAST` | `0.3` to `2 km` | `1` to `5 km` | `2` to `10 km` | `5` to `20+ km` |
+| `MEDIUM_SLOW`, `LONG_FAST` | `1` to `5 km` | `3` to `10 km` | `10` to `40 km` | `20` to `100+ km` |
+| `LONG_MODERATE`, `LONG_SLOW` | `2` to `8 km` | `5` to `15 km` | `15` to `80 km` | `30` to `150+ km` |
+| `VERY_LONG_SLOW` | `2` to `10 km` | `5` to `20 km` | `20` to `100+ km` | `50` to `200+ km` |
+
+How to read that table:
+
+- `Dense urban / indoors` means street canyons, buildings, foliage, cars, and low mounting height. In that environment, even the long presets are often still in the `sub-km to few-km` regime.
+- `Typical urban / suburban` means neighborhood to neighborhood, some building blockage, some roofline clearance, and no major ridge obstruction.
+- `Rolling hills / ridge assist` can be much better than flat urban terrain if one or both nodes are placed on local high ground with partial line-of-sight.
+- `Clear elevated line-of-sight` means hilltop, tower, or mountain-to-mountain geometry. That is the regime where Meshtastic's published record distances live.
+
+Choosing a preset in practice:
+
+- Start with `LONG_FAST` unless you have a specific reason not to; it is the Meshtastic default because it is a good compromise.
+- Move toward `SHORT_*` or `*_TURBO` if you have many nearby nodes and want shorter airtime and less channel congestion.
+- Move toward `LONG_SLOW` or `VERY_LONG_SLOW` only when maximum reach matters more than latency and throughput.
+- In EU regions, slower presets increase airtime, so duty-cycle limits become more visible during heavier traffic.
+
+To provision WiFi at the same time:
+
+```bash
+MESHTASTIC_WIFI_SSID="YOUR_WIFI_SSID" \
+MESHTASTIC_WIFI_PSK="YOUR_WIFI_PASSWORD" \
+./setup/meshtastic-python.sh provision
+```
+
+To provision names at the same time:
+
+```bash
+MESHTASTIC_OWNER_LONG="Backpack Node" \
+MESHTASTIC_OWNER_SHORT="PACK" \
+./setup/meshtastic-python.sh provision
+```
+
+For an interactive colored flow with defaults and optional WiFi, run:
+
+```bash
+./setup/meshtastic-python.sh guided
+```
+
+If you leave the WiFi SSID or password blank in guided mode, WiFi setup is skipped.
+
+## Status Tool
+
+The repo-local pretty status tool lives at [tools/meshtastic_status.py](tools/meshtastic_status.py) and can be called directly or through the setup script wrapper.
+
+After `./setup/meshtastic-python.sh bootstrap`, direct invocation works too:
+
+```bash
+tools/meshtastic_status.py
+```
+
+Connection selection for direct invocation:
+
+- `--host` wins if provided explicitly
+- otherwise `MESHTASTIC_HOST` is used if set
+- otherwise a healthy local proxy or broker endpoint is auto-detected from `.runtime/meshtastic/proxy-status.json`
+- otherwise the tool falls back to direct serial access on `--port` or `MESHTASTIC_PORT`
+
+To inspect that decision path explicitly, run:
+
+```bash
+./setup/meshtastic-python.sh target-debug
+./setup/meshtastic-python.sh target-debug --json
+./setup/meshtastic-python.sh target-debug --brief
+```
+
+Examples:
+
+```bash
+./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh status nodes
+./setup/meshtastic-python.sh status config lora network
+./setup/meshtastic-python.sh status raw-info
+./setup/meshtastic-python.sh status traceroute !0438ca24
+```
+
+The summary view now reports the modem preset explicitly, even when the device is using the protobuf default enum value such as `LONG_FAST`.
+
+It also reports the configured Meshtastic device role and whether fixed-position mode is enabled, including the current coordinates when the node is advertising them.
+
+## Monitor Tool
+
+The repo-local event monitor lives at [tools/meshtastic_monitor.py](tools/meshtastic_monitor.py). It stays connected and prints Meshtastic events as they happen.
+
+Like the status tool, direct monitor runs now auto-prefer an explicit `--host`, then `MESHTASTIC_HOST`, then a healthy local proxy or broker, and only fall back to serial when no TCP target is available.
+
+Examples:
+
+```bash
+./setup/meshtastic-python.sh monitor
+./setup/meshtastic-python.sh monitor --include-log-lines
+./setup/meshtastic-python.sh monitor --json
+./setup/meshtastic-python.sh monitor --only connection,node
+./setup/meshtastic-python.sh monitor --exclude log,routing
+./setup/meshtastic-python.sh monitor --log-file logs/meshtastic-monitor.log
+tools/meshtastic_monitor.py --topic-prefix meshtastic.receive
+```
+
+Filter notes:
+
+- `--only` accepts comma-separated topic or event filters such as `connection`, `node`, `receive`, `receive.text`, `position`, `telemetry`
+- `--exclude` suppresses matching events after inclusion filtering
+- `--log-file` appends the emitted stream to a file while still printing to the terminal
+
+When the local proxy is running, the setup wrapper automatically routes `status`, `monitor`, and `console` through TCP on `127.0.0.1:4403` unless `MESHTASTIC_HOST` is set explicitly.
+
+## Proxy
+
+The repo now includes a local serial-to-TCP proxy at [tools/meshtastic_proxy.py](tools/meshtastic_proxy.py). It owns `/dev/ttyUSB0` once and exposes a Meshtastic-compatible TCP endpoint for local clients such as the status tool, monitor, or Contact console.
+
+In practice the proxy now behaves as a local broker as well: direct repo tools auto-detect it and prefer it, and the broker layer arbitrates control writes so multiple local clients can safely share the same Meshtastic link.
+
+Examples:
+
+```bash
+./setup/meshtastic-python.sh proxy-start
+./setup/meshtastic-python.sh proxy-status
+./setup/meshtastic-python.sh proxy-status --json
+./setup/meshtastic-python.sh proxy-check
+./setup/meshtastic-python.sh proxy-check --json
+./setup/meshtastic-python.sh proxy-autostart-install
+./setup/meshtastic-python.sh proxy-autostart-status
+./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh monitor --only connection,node
+./setup/meshtastic-python.sh console
+./setup/meshtastic-python.sh proxy-stop
+```
+
+Notes:
+
+- the proxy defaults to `127.0.0.1:4403`, which matches Meshtastic's standard TCP default
+- `proxy-status` now reports `running` only when the TCP endpoint is actually reachable; `proxy-check` is a machine-friendly health probe
+- `proxy-status` also shows broker state such as connected client count, current control-session owner, and allowed/denied control-write counters
+- both `proxy-status --json` and `proxy-check --json` emit machine-readable state derived from the same proxy status snapshot file
+- on Linux, `proxy-autostart-install` installs a systemd user service that enables the proxy or broker automatically and sends logs to journald with the identifier `meshtastic-proxy`
+- `proxy-autostart-status` now prints the effective runtime root and proxy status-file path, so it is explicit which checkout the service is pinned to
+- `proxy-log` automatically follows `journalctl --user -u meshtastic-proxy.service -f` when the systemd user service is installed
+- the systemd user service starts automatically after login; to keep it running across reboot before login, enable user lingering with `sudo loginctl enable-linger $USER`
+- direct invocations of [tools/meshtastic_status.py](tools/meshtastic_status.py), [tools/meshtastic_monitor.py](tools/meshtastic_monitor.py), and [console/contact.sh](console/contact.sh) auto-detect and prefer the local proxy or broker when it is healthy
+- `./setup/meshtastic-python.sh target-debug` explains which target the repo tools would use and why, with optional `--json` and single-line `--brief` modes for automation
+- `proxy-start` writes runtime state under `.runtime/meshtastic/`
+- the broker now ages out stale control owners, upgrades observed admin sessions into longer-lived leases, and records the last seen session passkey in its status snapshot
+- flash, doctor, and raw serial log capture require direct serial access, so stop the proxy first for those commands
+- `MESHTASTIC_HOST` and `MESHTASTIC_TCP_PORT` can point the wrappers at a remote Meshtastic TCP endpoint instead of the local proxy
+
+## Console TUI
+
+The upstream Contact console UI for Meshtastic is vendored under [console/README.md](console/README.md), so there is no separate `pip install contact` step for this repo.
+
+Examples:
+
+```bash
+./setup/meshtastic-python.sh console
+./setup/meshtastic-python.sh console --settings
+./setup/meshtastic-python.sh console --host 192.168.1.10
+./console/contact.sh --port /dev/ttyUSB0
+```
+
+If the local proxy is healthy, [console/contact.sh](console/contact.sh) now prefers it automatically even when launched directly.
+
+It now uses the same shared target resolver as the repo-local Python tools, so Contact follows the same precedence order as `meshtastic_status.py` and `meshtastic_monitor.py`.
+
+## Notes
+
+- WiFi on ESP32 Meshtastic nodes is client mode only.
+- Enabling WiFi disables Bluetooth on the node.
+- For browser access over USB, use Meshtastic Web with Web Serial.
+- For phone access over WiFi, connect the node to the same LAN as the phone and then use the Meshtastic app or web client over the node IP / `meshtastic.local`.
+- Local backup artifacts under `docs/backup/` are ignored and are not part of the reproducible repo state.
+
+Supporting notes and downloaded firmware are under [docs/notes](docs/notes) and [docs/firmware](docs/firmware).
+
+## Script Docs
+
+Per-script reference documents are available under `docs/`:
+
+- [docs/meshtastic_tools_overview.md](docs/meshtastic_tools_overview.md)
+- [docs/meshtastic_status.md](docs/meshtastic_status.md)
+- [docs/meshtastic_monitor.md](docs/meshtastic_monitor.md)
+- [docs/meshtastic_proxy.md](docs/meshtastic_proxy.md)
+- [docs/meshtastic_broker.md](docs/meshtastic_broker.md)

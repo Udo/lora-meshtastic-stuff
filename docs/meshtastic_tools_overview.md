@@ -1,0 +1,38 @@
+# Meshtastic Tools Overview
+
+## Usage
+
+```bash
+./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh monitor --only connection,node
+./setup/meshtastic-python.sh proxy-start
+./setup/meshtastic-python.sh console
+./setup/meshtastic-python.sh target-debug
+./setup/meshtastic-python.sh target-debug --brief
+```
+
+## Function
+
+- `meshtastic_status.py` is the read-oriented inspection tool for summary, config, nodes, and a few Meshtastic CLI passthrough operations.
+- `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.
+- `meshtastic_proxy.py` is the long-running serial-owning TCP endpoint that lets multiple local clients share one radio connection.
+- `meshtastic_broker.py` is the frame-aware policy layer inside the proxy that arbitrates mutating control traffic.
+- `setup/meshtastic-python.sh` is the operational wrapper that bootstraps the environment, manages the proxy lifecycle, and routes user-facing commands through the correct target.
+- On Linux, the wrapper can install the proxy as a systemd user service so it auto-starts and logs to journald.
+
+## Troubleshooting
+
+- If anything involving transport selection is unclear, run `./setup/meshtastic-python.sh target-debug` first.
+- If multiple tools need the radio at once, prefer `proxy-start` and let the direct tools auto-detect the healthy local proxy.
+- If a tool unexpectedly falls back to serial, inspect `.runtime/meshtastic/proxy-status.json` and confirm the local TCP endpoint is reachable with `proxy-check`.
+- If control writes are denied, inspect `proxy-status --json` for the current owner, whether the lease is confirmed, and how much lease time remains.
+- If the proxy is installed as a systemd user service, inspect logs with `proxy-log` or `journalctl --user -u meshtastic-proxy.service`.
+
+## Architecture
+
+- Shared target resolution lives in `tools/_meshtastic_common.py`.
+- The wrapper and direct tools all follow the same transport precedence: explicit host, `MESHTASTIC_HOST`, healthy local proxy, then serial fallback.
+- The proxy owns `/dev/ttyUSB0` once and exports a Meshtastic-compatible TCP stream on `127.0.0.1:4403` by default.
+- On Linux, that proxy can be promoted from an ad hoc background process to a systemd user service managed by the wrapper.
+- The broker parses framed Meshtastic traffic so control ownership is enforced on protocol boundaries instead of raw bytes.
+- Status JSON under `.runtime/meshtastic/proxy-status.json` is the contract between the long-running proxy process and the short-lived wrapper or tool invocations.

@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+import json
+import os
+import socket
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
+DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"
+DEFAULT_TCP_HOST = "127.0.0.1"
+DEFAULT_TCP_PORT = 4403
+PROXY_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "proxy-status.json"
+
+
+def ensure_repo_python(env_guard: str) -> None:
+    if os.environ.get(env_guard) == "1":
+        return
+    if not VENV_PYTHON.exists():
+        return
+    if Path(sys.executable).absolute() == VENV_PYTHON:
+        return
+
+    env = os.environ.copy()
+    env[env_guard] = "1"
+    os.execve(str(VENV_PYTHON), [str(VENV_PYTHON), sys.argv[0], *sys.argv[1:]], env)
+
+
+def use_color() -> bool:
+    return sys.stdout.isatty()
+
+
+class Palette:
+    def __init__(self) -> None:
+        enabled = use_color()
+        self.reset = "\033[0m" if enabled else ""
+        self.bold = "\033[1m" if enabled else ""
+        self.dim = "\033[2m" if enabled else ""
+        self.red = "\033[31m" if enabled else ""
+        self.green = "\033[32m" if enabled else ""
+        self.yellow = "\033[33m" if enabled else ""
+        self.blue = "\033[34m" if enabled else ""
+        self.magenta = "\033[35m" if enabled else ""
+        self.cyan = "\033[36m" if enabled else ""
+
+
+def style(palette: Palette, color: str, text: str) -> str:
+    return f"{color}{text}{palette.reset}"
+
+
+def interface_target(interface: object) -> str:
+    dev_path = getattr(interface, "devPath", None)
+    if dev_path:
+        return str(dev_path)
+
+    hostname = getattr(interface, "hostname", None)
+    port_number = getattr(interface, "portNumber", None)
+    if hostname and port_number:
+        return f"{hostname}:{port_number}"
+    if hostname:
+        return str(hostname)
+    return "-"
+
+
+@dataclass(frozen=True)
+class MeshtasticTarget:
+    mode: str
+    source: str
+    serial_port: str = DEFAULT_SERIAL_PORT
+    host: str = ""
+    tcp_port: int = DEFAULT_TCP_PORT
+
+    @property
+    def label(self) -> str:
+        if self.mode == "tcp":
+            return f"{self.host}:{self.tcp_port}"
+        return self.serial_port
+
+
+def env_serial_port() -> str:
+    return os.environ.get("MESHTASTIC_PORT", DEFAULT_SERIAL_PORT)
+
+
+def env_tcp_port() -> int:
+    raw_value = os.environ.get("MESHTASTIC_TCP_PORT", str(DEFAULT_TCP_PORT))
+    try:
+        return int(raw_value)
+    except ValueError:
+        return DEFAULT_TCP_PORT
+
+
+def env_host_override() -> str:
+    return os.environ.get("MESHTASTIC_HOST", "")
+
+
+def env_proxy_host() -> str:
+    return os.environ.get("MESHTASTIC_PROXY_HOST", DEFAULT_TCP_HOST)
+
+
+def load_proxy_status(status_file: Path = PROXY_STATUS_FILE) -> dict[str, object]:
+    if not status_file.exists():
+        return {}
+    try:
+        return json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def tcp_endpoint_ready(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def detect_proxy_target(status_file: Path | None = None) -> MeshtasticTarget | None:
+    status_file = status_file or PROXY_STATUS_FILE
+    status = load_proxy_status(status_file)
+    host = str(status.get("listen_host") or env_proxy_host())
+    port = status.get("listen_port")
+    if isinstance(port, int):
+        tcp_port = port
+    else:
+        tcp_port = env_tcp_port()
+
+    if tcp_endpoint_ready(host, tcp_port):
+        return MeshtasticTarget(mode="tcp", source="local-proxy", host=host, tcp_port=tcp_port)
+    return None
+
+
+def _resolve_meshtastic_target_with_details(
+    port: str = "",
+    host: str = "",
+    tcp_port: int | None = None,
+    status_file: Path | None = None,
+) -> tuple[MeshtasticTarget, dict[str, object]]:
+    status_file = status_file or PROXY_STATUS_FILE
+    serial_port = port or env_serial_port()
+    resolved_tcp_port = tcp_port if tcp_port is not None else env_tcp_port()
+    explicit_host = host or env_host_override()
+    details: dict[str, object] = {
+        "requested": {
+            "port": port,
+            "host": host,
+            "tcp_port": tcp_port,
+        },
+        "env": {
+            "MESHTASTIC_PORT": os.environ.get("MESHTASTIC_PORT", ""),
+            "MESHTASTIC_HOST": env_host_override(),
+            "MESHTASTIC_TCP_PORT": os.environ.get("MESHTASTIC_TCP_PORT", ""),
+            "MESHTASTIC_PROXY_HOST": env_proxy_host(),
+        },
+        "proxy_status_file": str(status_file),
+        "checks": [],
+        "serial_fallback": serial_port,
+    }
+
+    if explicit_host:
+        target = MeshtasticTarget(
+            mode="tcp",
+            source="explicit-host" if host else "env-host",
+            host=explicit_host,
+            tcp_port=resolved_tcp_port,
+        )
+        details["checks"].append(
+            "Using explicit --host override." if host else "Using MESHTASTIC_HOST environment override."
+        )
+        return target, details
+
+    status = load_proxy_status(status_file)
+    details["proxy_snapshot_exists"] = status_file.exists()
+    if status:
+        details["proxy_snapshot"] = status
+
+    proxy_host = str(status.get("listen_host") or env_proxy_host())
+    listen_port = status.get("listen_port")
+    proxy_port = listen_port if isinstance(listen_port, int) else resolved_tcp_port
+    proxy_reachable = tcp_endpoint_ready(proxy_host, proxy_port)
+    details["proxy_candidate"] = {"host": proxy_host, "tcp_port": proxy_port}
+    details["proxy_reachable"] = proxy_reachable
+
+    if proxy_reachable:
+        target = MeshtasticTarget(mode="tcp", source="local-proxy", host=proxy_host, tcp_port=proxy_port)
+        details["checks"].append(f"Using healthy local proxy or broker at {proxy_host}:{proxy_port}.")
+        return target, details
+
+    target = MeshtasticTarget(mode="serial", source="serial-fallback", serial_port=serial_port, tcp_port=resolved_tcp_port)
+    details["checks"].append(f"Falling back to direct serial access on {serial_port}.")
+    return target, details
+
+
+def resolve_meshtastic_target(
+    port: str = "",
+    host: str = "",
+    tcp_port: int | None = None,
+    status_file: Path | None = None,
+) -> MeshtasticTarget:
+    target, _ = _resolve_meshtastic_target_with_details(port=port, host=host, tcp_port=tcp_port, status_file=status_file)
+    return target
+
+
+def explain_meshtastic_target(
+    port: str = "",
+    host: str = "",
+    tcp_port: int | None = None,
+    status_file: Path | None = None,
+) -> dict[str, object]:
+    target, details = _resolve_meshtastic_target_with_details(port=port, host=host, tcp_port=tcp_port, status_file=status_file)
+    details["selected"] = {
+        "mode": target.mode,
+        "source": target.source,
+        "serial_port": target.serial_port,
+        "host": target.host,
+        "tcp_port": target.tcp_port,
+        "label": target.label,
+    }
+    return details
