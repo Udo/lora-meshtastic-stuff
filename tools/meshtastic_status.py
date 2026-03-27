@@ -6,6 +6,7 @@ import subprocess
 import sys
 from statistics import mean
 from pathlib import Path
+from threading import Event
 
 from _meshtastic_common import (
     DEFAULT_SERIAL_PORT,
@@ -25,6 +26,7 @@ ensure_repo_python("MESHTASTIC_STATUS_VENV_EXEC")
 try:
     from google.protobuf.descriptor import FieldDescriptor
     from google.protobuf.json_format import MessageToDict
+    from meshtastic.protobuf import portnums_pb2, telemetry_pb2
     from meshtastic.serial_interface import SerialInterface
     from meshtastic.tcp_interface import TCPInterface
     from serial.serialutil import SerialException
@@ -248,6 +250,201 @@ def render_neighbors(iface) -> None:
         print(f"{row['id']:<12} {str(row['name']):12.12} {row['snr']:>8.2f} {hops_display:>6}")
 
 
+TELEMETRY_TYPE_MAP = {
+    "device": "device_metrics",
+    "environment": "environment_metrics",
+    "air-quality": "air_quality_metrics",
+    "power": "power_metrics",
+    "local-stats": "local_stats",
+}
+
+TELEMETRY_FIELD_MAP = {
+    "device_metrics": "deviceMetrics",
+    "environment_metrics": "environmentMetrics",
+    "air_quality_metrics": "airQualityMetrics",
+    "power_metrics": "powerMetrics",
+    "local_stats": "localStats",
+}
+
+
+def collect_proximity_candidates(iface, include_multihop: bool = False) -> list[dict[str, object]]:
+    local_num = iface.myInfo.my_node_num
+    candidates: list[dict[str, object]] = []
+
+    for node in iface.nodes.values():
+        if node.get("num") == local_num:
+            continue
+
+        user = node.get("user", {})
+        hops = node.get("hopsAway")
+        snr = node.get("snr")
+        try:
+            snr_value = float(snr) if snr is not None else None
+        except (TypeError, ValueError):
+            snr_value = None
+
+        is_direct = hops == 0
+        if not include_multihop and not is_direct:
+            continue
+
+        candidates.append(
+            {
+                "id": user.get("id", "-"),
+                "name": user.get("shortName") or user.get("longName") or user.get("id") or "-",
+                "node_num": node.get("num"),
+                "snr": snr_value,
+                "hops": hops,
+                "is_direct": is_direct,
+            }
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            0 if item["is_direct"] else 1,
+            0 if item["snr"] is not None else 1,
+            -(item["snr"] or float("-inf")) if item["snr"] is not None else 0.0,
+            item["hops"] if isinstance(item["hops"], int) else 999,
+            str(item["name"]),
+        )
+    )
+    return candidates
+
+
+def _build_telemetry_request(telemetry_type: str):
+    request = telemetry_pb2.Telemetry()
+    if telemetry_type == "environment_metrics":
+        request.environment_metrics.CopyFrom(telemetry_pb2.EnvironmentMetrics())
+    elif telemetry_type == "air_quality_metrics":
+        request.air_quality_metrics.CopyFrom(telemetry_pb2.AirQualityMetrics())
+    elif telemetry_type == "power_metrics":
+        request.power_metrics.CopyFrom(telemetry_pb2.PowerMetrics())
+    elif telemetry_type == "local_stats":
+        request.local_stats.CopyFrom(telemetry_pb2.LocalStats())
+    else:
+        request.device_metrics.CopyFrom(telemetry_pb2.DeviceMetrics())
+    return request
+
+
+def request_telemetry_from_node(iface, node_id: str, telemetry_type: str, timeout_seconds: float) -> dict[str, object]:
+    completed = Event()
+    response: dict[str, object] = {}
+
+    def on_response(packet: dict[str, object]) -> None:
+        response.clear()
+        response.update(packet)
+        completed.set()
+
+    iface.sendData(
+        _build_telemetry_request(telemetry_type),
+        destinationId=node_id,
+        portNum=portnums_pb2.PortNum.TELEMETRY_APP,
+        wantResponse=True,
+        onResponse=on_response,
+    )
+
+    if not completed.wait(timeout=max(timeout_seconds, 0.0)):
+        return {"status": "timeout"}
+
+    decoded = response.get("decoded", {})
+    if not isinstance(decoded, dict):
+        return {"status": "invalid-response"}
+
+    if decoded.get("portnum") == "ROUTING_APP":
+        routing = decoded.get("routing", {})
+        reason = routing.get("errorReason") if isinstance(routing, dict) else None
+        return {"status": "routing-error", "reason": reason or "unknown"}
+
+    telemetry = decoded.get("telemetry")
+    if not isinstance(telemetry, dict):
+        return {"status": "unexpected-response"}
+
+    return {
+        "status": "ok",
+        "telemetry": telemetry,
+        "packet": response,
+    }
+
+
+def collect_cached_telemetry_candidates(iface, telemetry_type: str, include_multihop: bool = False) -> list[dict[str, object]]:
+    telemetry_field = TELEMETRY_FIELD_MAP[telemetry_type]
+    candidates = collect_proximity_candidates(iface, include_multihop=include_multihop)
+    return [candidate for candidate in candidates if cached_telemetry_for_node(iface, str(candidate["id"]), telemetry_type)]
+
+
+def cached_telemetry_for_node(iface, node_id: str, telemetry_type: str) -> dict[str, object] | None:
+    telemetry_field = TELEMETRY_FIELD_MAP[telemetry_type]
+    for node in iface.nodes.values():
+        if node.get("user", {}).get("id") == node_id:
+            telemetry = node.get(telemetry_field)
+            return telemetry if isinstance(telemetry, dict) else None
+    return None
+
+
+def render_telemetry(iface, telemetry_mode: str, telemetry_type: str, limit: int, include_multihop: bool, timeout_seconds: float, json_output: bool) -> int:
+    if telemetry_mode == "cached":
+        candidates = collect_cached_telemetry_candidates(iface, telemetry_type, include_multihop=include_multihop)
+    else:
+        candidates = collect_proximity_candidates(iface, include_multihop=include_multihop)
+    if not candidates and not include_multihop:
+        if telemetry_mode == "cached":
+            candidates = collect_cached_telemetry_candidates(iface, telemetry_type, include_multihop=True)
+        else:
+            candidates = collect_proximity_candidates(iface, include_multihop=True)
+
+    if limit > 0:
+        candidates = candidates[:limit]
+
+    if not candidates:
+        if telemetry_mode == "cached":
+            print("No nearby nodes have cached telemetry of the requested type.", file=sys.stderr)
+        else:
+            print("No nearby nodes found with enough routing metadata to request telemetry.", file=sys.stderr)
+        return 1
+
+    results: list[dict[str, object]] = []
+    for candidate in candidates:
+        if telemetry_mode == "cached":
+            telemetry = cached_telemetry_for_node(iface, str(candidate["id"]), telemetry_type)
+            result = {"status": "ok", "telemetry": {TELEMETRY_FIELD_MAP[telemetry_type]: telemetry}} if telemetry else {"status": "missing"}
+        else:
+            result = request_telemetry_from_node(iface, str(candidate["id"]), telemetry_type, timeout_seconds)
+        results.append({"node": candidate, **result})
+
+    if json_output:
+        payload = {
+            "telemetry_mode": telemetry_mode,
+            "telemetry_type": telemetry_type,
+            "include_multihop": include_multihop,
+            "results": results,
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    heading(f"Telemetry {telemetry_mode.title()} ({telemetry_type})")
+    kv("Candidates queried", len(results))
+    kv("Selection", "direct neighbors first" + (", then multihop" if include_multihop else ""))
+    for item in results:
+        node = item["node"]
+        label = f"{node['id']} ({node['name']})"
+        hops = node.get("hops")
+        snr = node.get("snr")
+        proximity = []
+        proximity.append("direct" if node.get("is_direct") else f"hops={hops if hops is not None else '-'}")
+        if snr is not None:
+            proximity.append(f"snr={snr:.2f} dB")
+        print()
+        print(style(PALETTE, PALETTE.bold + PALETTE.cyan, label))
+        print(style(PALETTE, PALETTE.dim, ", ".join(proximity)))
+        if item["status"] == "ok":
+            telemetry = item.get("telemetry", {})
+            print(json.dumps(telemetry, indent=2, sort_keys=True))
+        elif item["status"] == "routing-error":
+            print(f"routing-error: {item.get('reason', 'unknown')}")
+        else:
+            print(item["status"])
+    return 0
+
+
 def run_cli(args: list[str]) -> int:
     python_exe = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     command = [python_exe, "-m", "meshtastic", *args]
@@ -289,6 +486,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("nodes", help="Show known nodes in a compact table")
     subparsers.add_parser("neighbors", help="Show neighbor signal quality without crashing on incomplete node records")
+    telemetry_parser = subparsers.add_parser("telemetry", help="Request telemetry from the closest known nodes")
+    telemetry_parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=("active", "cached"),
+        default="active",
+        help="Use active request/response polling or only print cached telemetry already learned by this node",
+    )
+    telemetry_parser.add_argument(
+        "--type",
+        choices=tuple(TELEMETRY_TYPE_MAP),
+        default="environment",
+        help="Telemetry payload to request (default: environment)",
+    )
+    telemetry_parser.add_argument("--limit", type=int, default=3, help="Maximum number of nearby nodes to query")
+    telemetry_parser.add_argument(
+        "--include-multihop",
+        action="store_true",
+        help="After direct neighbors, also query multihop nodes ordered by proximity signals",
+    )
+    telemetry_parser.add_argument("--timeout", type=float, default=10.0, help="Seconds to wait per node for a telemetry response")
+    telemetry_parser.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable output")
     subparsers.add_parser("raw-info", help="Show raw CLI info output")
 
     traceroute_parser = subparsers.add_parser("traceroute", help="Run a traceroute via Meshtastic CLI")
@@ -322,6 +541,16 @@ def main() -> int:
             render_nodes(iface)
         elif command == "neighbors":
             render_neighbors(iface)
+        elif command == "telemetry":
+            return render_telemetry(
+                iface,
+                telemetry_mode=args.mode,
+                telemetry_type=TELEMETRY_TYPE_MAP[args.type],
+                limit=max(args.limit, 0),
+                include_multihop=args.include_multihop,
+                timeout_seconds=args.timeout,
+                json_output=args.json,
+            )
         else:
             parser.error(f"Unknown command: {command}")
     finally:

@@ -4,6 +4,8 @@
 
 ```bash
 ./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh telemetry --type environment
+./setup/meshtastic-python.sh telemetry cached --type environment
 ./setup/meshtastic-python.sh monitor --only connection,node
 ./setup/meshtastic-python.sh messages sync mesh-chat
 ./setup/meshtastic-python.sh proxy-start
@@ -15,6 +17,7 @@
 ## Function
 
 - `meshtastic_status.py` is the read-oriented inspection tool for summary, config, nodes, and a few Meshtastic CLI passthrough operations.
+- The wrapper-level `telemetry` command uses `meshtastic_status.py telemetry` for either active polling or cached telemetry display, with direct neighbors preferred over multihop nodes.
 - `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.
 - `meshtastic_messages.py` is the lightweight send-and-transcript tool for private sends plus public/private message logging into `~/.local/log/meshtastic/*.log`, with local `tail` and `grep` helpers for those transcript files.
 - `meshtastic_proxy.py` is the long-running serial-owning TCP endpoint that lets multiple local clients share one radio connection.

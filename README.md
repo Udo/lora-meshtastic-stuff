@@ -40,6 +40,8 @@ Common commands:
 ./setup/meshtastic-python.sh set-ham DO1ABC
 ./setup/meshtastic-python.sh set-wifi "YOUR_WIFI_SSID" "YOUR_WIFI_PASSWORD"
 ./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh telemetry --type environment
+./setup/meshtastic-python.sh telemetry cached --type environment
 ./setup/meshtastic-python.sh monitor
 ./setup/meshtastic-python.sh messages send WO67 "hello"
 ./setup/meshtastic-python.sh messages sync mesh-chat
@@ -197,6 +199,9 @@ Examples:
 ./setup/meshtastic-python.sh status summary
 ./setup/meshtastic-python.sh status nodes
 ./setup/meshtastic-python.sh status neighbors
+./setup/meshtastic-python.sh telemetry --type environment
+./setup/meshtastic-python.sh telemetry cached --type environment
+./setup/meshtastic-python.sh telemetry --type air-quality --limit 5 --include-multihop
 ./setup/meshtastic-python.sh status config lora network
 ./setup/meshtastic-python.sh status raw-info
 ./setup/meshtastic-python.sh status traceroute !0438ca24
@@ -226,6 +231,8 @@ The summary view now reports the modem preset explicitly, even when the device i
 It also reports the configured Meshtastic device role and whether fixed-position mode is enabled, including the current coordinates when the node is advertising them.
 
 The `neighbors` view provides a live RF snapshot of peers with SNR data, including direct-neighbor counts and averages, and it skips incomplete NodeDB records instead of crashing on malformed entries.
+
+The wrapper also exposes `telemetry`, which delegates to `status telemetry`. The default mode is an active request/response poll of nearby nodes. `telemetry cached ...` only prints telemetry the local node has already learned in the background. Both modes target the closest direct neighbors first using hop count and SNR; `--include-multihop` lets them continue to farther nodes if you want a wider sweep.
 
 ## Messaging Tool
 

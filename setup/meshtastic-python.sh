@@ -83,6 +83,7 @@ Commands:
   set-ham         Set licensed ham ID and disable encryption
   set-wifi        Enable WiFi client mode and store SSID/PSK on the node
   status          Run the pretty Meshtastic status tool from tools/
+  telemetry       Request telemetry from nearby nodes via the status tool
   monitor         Run the continuous Meshtastic event monitor from tools/
   messages        Send private messages, sync transcripts, or inspect logs under ~/.local/log/meshtastic/*.log
   proxy-start     Start the local Meshtastic serial-to-TCP proxy in the background
@@ -1460,6 +1461,10 @@ status() {
   fi
 }
 
+telemetry() {
+  status telemetry "$@"
+}
+
 monitor() {
   check_monitor_tool
   local host
@@ -1940,6 +1945,10 @@ main() {
     status)
       shift
       status "$@"
+      ;;
+    telemetry)
+      shift
+      telemetry "$@"
       ;;
     monitor)
       shift

@@ -232,6 +232,17 @@ main messages send WO67 hello mesh
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "messages:send WO67 hello mesh\n")
 
+    def test_main_dispatches_telemetry(self) -> None:
+        result = run_wrapper_snippet(
+            """
+telemetry() { printf 'telemetry:%s\n' "$*"; }
+main telemetry --type environment --limit 2
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "telemetry:--type environment --limit 2\n")
+
     def test_contacts_remove_forwards_to_meshtastic_cli(self) -> None:
         result = run_wrapper_snippet(
             """
