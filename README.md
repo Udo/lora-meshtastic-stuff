@@ -41,6 +41,8 @@ Common commands:
 ./setup/meshtastic-python.sh set-wifi "YOUR_WIFI_SSID" "YOUR_WIFI_PASSWORD"
 ./setup/meshtastic-python.sh status summary
 ./setup/meshtastic-python.sh monitor
+./setup/meshtastic-python.sh messages send WO67 "hello"
+./setup/meshtastic-python.sh messages sync mesh-chat
 ./setup/meshtastic-python.sh proxy-start
 ./setup/meshtastic-python.sh proxy-status
 ./setup/meshtastic-python.sh proxy-check
@@ -225,6 +227,34 @@ It also reports the configured Meshtastic device role and whether fixed-position
 
 The `neighbors` view provides a live RF snapshot of peers with SNR data, including direct-neighbor counts and averages, and it skips incomplete NodeDB records instead of crashing on malformed entries.
 
+## Messaging Tool
+
+The repo-local messaging tool lives at [tools/meshtastic_messages.py](tools/meshtastic_messages.py) and is exposed through the wrapper as `messages`.
+
+Examples:
+
+```bash
+./setup/meshtastic-python.sh messages send WO67 "hello from UDO1"
+./setup/meshtastic-python.sh messages send !0439d098 "private check" --log-name worms-dm
+./setup/meshtastic-python.sh messages sync mesh-chat
+./setup/meshtastic-python.sh messages sync mesh-chat --scope private
+./setup/meshtastic-python.sh messages tail mesh-chat --lines 20 --follow
+./setup/meshtastic-python.sh messages grep mesh-chat 'scope="private"' --count
+./setup/meshtastic-python.sh messages prune --days 14 --dry-run
+tools/meshtastic_messages.py sync mesh-chat --timeout 30
+```
+
+Notes:
+
+- `messages send` resolves peers by node ID, short name, long name, or a unique prefix from the current NodeDB snapshot and sends on Meshtastic `PRIVATE_APP`.
+- `messages sync` records live public and private text traffic that arrives while it is connected; it does not backfill old traffic from before the process started.
+- `messages tail`, `messages grep`, and `messages prune` are file-only helpers for inspecting and cleaning transcript logs without opening a radio connection.
+- Logs are appended to `~/.local/log/meshtastic/<logname>.log` using single-line key-value records so they stay easy to grep.
+- Set `MESHTASTIC_LOG_DIR` if you want the transcript files somewhere else, or use `tools/meshtastic_messages.py --log-dir /path/...` for a one-off override.
+- `messages tail --follow` behaves like `tail -f`, and `messages grep --count` prints only the number of matching lines.
+- `messages prune --days N` removes `.log` files older than `N` days; start with `--dry-run` if you want to inspect the candidates first.
+- The tool follows the same transport selection order as `status` and `monitor`, so it will automatically use the local proxy or broker when one is healthy.
+
 ## Monitor Tool
 
 The repo-local event monitor lives at [tools/meshtastic_monitor.py](tools/meshtastic_monitor.py). It stays connected and prints Meshtastic events as they happen.
@@ -326,5 +356,6 @@ Per-script reference documents are available under `docs/`:
 - [docs/meshtastic_tools_overview.md](docs/meshtastic_tools_overview.md)
 - [docs/meshtastic_status.md](docs/meshtastic_status.md)
 - [docs/meshtastic_monitor.md](docs/meshtastic_monitor.md)
+- [docs/meshtastic_messages.md](docs/meshtastic_messages.md)
 - [docs/meshtastic_proxy.md](docs/meshtastic_proxy.md)
 - [docs/meshtastic_broker.md](docs/meshtastic_broker.md)

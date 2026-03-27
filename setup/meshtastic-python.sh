@@ -24,6 +24,7 @@ FIRMWARE_BIN="firmware-heltec-v3-2.7.13.597fa0b.bin"
 FIRMWARE_INSTALLER="${FIRMWARE_DIR}/device-install.sh"
 STATUS_TOOL="${ROOT_DIR}/tools/meshtastic_status.py"
 MONITOR_TOOL="${ROOT_DIR}/tools/meshtastic_monitor.py"
+MESSAGES_TOOL="${ROOT_DIR}/tools/meshtastic_messages.py"
 PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
@@ -83,6 +84,7 @@ Commands:
   set-wifi        Enable WiFi client mode and store SSID/PSK on the node
   status          Run the pretty Meshtastic status tool from tools/
   monitor         Run the continuous Meshtastic event monitor from tools/
+  messages        Send private messages, sync transcripts, or inspect logs under ~/.local/log/meshtastic/*.log
   proxy-start     Start the local Meshtastic serial-to-TCP proxy in the background
   proxy-stop      Stop the local Meshtastic proxy
   proxy-status    Show local Meshtastic proxy status
@@ -111,6 +113,7 @@ Environment:
   MESHTASTIC_OWNER_SHORT Optional short node name applied by provision
   MESHTASTIC_WIFI_SSID Optional WiFi SSID applied by provision
   MESHTASTIC_WIFI_PSK Optional WiFi PSK applied by provision
+  MESHTASTIC_LOG_DIR Override the default Meshtastic transcript directory (default: ~/.local/log/meshtastic)
   MESHTASTIC_PORT_WAIT_SECONDS Seconds to wait for the serial port after flashing (default: 30)
 EOF
 }
@@ -373,6 +376,13 @@ check_status_tool() {
 check_monitor_tool() {
   if [[ ! -f "${MONITOR_TOOL}" ]]; then
     print_error "Monitor tool not found: ${MONITOR_TOOL}"
+    exit 1
+  fi
+}
+
+check_messages_tool() {
+  if [[ ! -f "${MESSAGES_TOOL}" ]]; then
+    print_error "Messages tool not found: ${MESSAGES_TOOL}"
     exit 1
   fi
 }
@@ -1463,6 +1473,19 @@ monitor() {
   fi
 }
 
+messages() {
+  check_messages_tool
+  local host
+  host="$(effective_host || true)"
+
+  if [[ -n "${host}" ]]; then
+    run_in_venv python "${MESSAGES_TOOL}" --host "${host}" --tcp-port "${TCP_PORT}" "$@"
+  else
+    check_port
+    run_in_venv python "${MESSAGES_TOOL}" --port "${PORT}" "$@"
+  fi
+}
+
 proxy_start() {
   check_proxy_tool
   ensure_python_packages
@@ -1921,6 +1944,10 @@ main() {
     monitor)
       shift
       monitor "$@"
+      ;;
+    messages)
+      shift
+      messages "$@"
       ;;
     proxy-start)
       proxy_start

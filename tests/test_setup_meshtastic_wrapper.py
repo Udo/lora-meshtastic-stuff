@@ -221,6 +221,17 @@ main nodedb-reset
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "nodedb-reset\n")
 
+    def test_main_dispatches_messages(self) -> None:
+        result = run_wrapper_snippet(
+            """
+messages() { printf 'messages:%s\n' "$*"; }
+main messages send WO67 hello mesh
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "messages:send WO67 hello mesh\n")
+
     def test_contacts_remove_forwards_to_meshtastic_cli(self) -> None:
         result = run_wrapper_snippet(
             """
