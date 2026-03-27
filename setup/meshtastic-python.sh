@@ -1510,118 +1510,127 @@ shell_cmd() {
   echo "source ${VENV_DIR}/bin/activate"
 }
 
-COMMAND="${1:-help}"
+main() {
+  local command="${1:-help}"
 
-case "${COMMAND}" in
-  bootstrap)
-    bootstrap
-    ;;
-  flash)
-    flash
-    ;;
-  provision)
-    provision
-    ;;
-  guided)
-    guided
-    ;;
-  probe)
-    probe
-    ;;
-  nodes)
-    nodes
-    ;;
-  export-config)
-    export_config
-    ;;
-  set-name)
-    shift
-    set_name "$@"
-    ;;
-  set-role)
-    shift
-    set_role "$@"
-    ;;
-  set-region)
-    shift
-    set_region "$@"
-    ;;
-  set-modem-preset)
-    shift
-    set_modem_preset "$@"
-    ;;
-  set-position)
-    shift
-    set_position "$@"
-    ;;
-  clear-position)
-    clear_position
-    ;;
-  set-ham)
-    shift
-    set_ham "$@"
-    ;;
-  set-wifi)
-    shift
-    set_wifi "$@"
-    ;;
-  status)
-    shift
-    status "$@"
-    ;;
-  monitor)
-    shift
-    monitor "$@"
-    ;;
-  proxy-start)
-    proxy_start
-    ;;
-  proxy-stop)
-    proxy_stop
-    ;;
-  proxy-autostart-install)
-    proxy_autostart_install
-    ;;
-  proxy-autostart-remove)
-    proxy_autostart_remove
-    ;;
-  proxy-autostart-status)
-    proxy_autostart_status
-    ;;
-  proxy-status)
-    shift
-    proxy_status "$@"
-    ;;
-  proxy-log)
-    proxy_log
-    ;;
-  target-debug)
-    shift
-    target_debug "$@"
-    ;;
-  proxy-check)
-    shift
-    proxy_check "$@"
-    ;;
-  console)
-    shift
-    console_tui "$@"
-    ;;
-  doctor)
-    doctor
-    ;;
-  rawlog)
-    rawlog
-    ;;
-  shell)
-    shell_cmd
-    ;;
-  help|-h|--help)
-    usage
-    ;;
-  *)
-    echo "Unknown command: ${COMMAND}" >&2
-    usage >&2
-    exit 1
-    ;;
-esac
+  case "${command}" in
+    bootstrap)
+      bootstrap
+      ;;
+    flash)
+      flash
+      ;;
+    provision)
+      provision
+      ;;
+    guided)
+      guided
+      ;;
+    probe)
+      probe
+      ;;
+    nodes)
+      nodes
+      ;;
+    export-config)
+      export_config
+      ;;
+    set-name)
+      shift
+      set_name "$@"
+      ;;
+    set-role)
+      shift
+      set_role "$@"
+      ;;
+    set-region)
+      shift
+      set_region "$@"
+      ;;
+    set-modem-preset)
+      shift
+      set_modem_preset "$@"
+      ;;
+    set-position)
+      shift
+      set_position "$@"
+      ;;
+    clear-position)
+      clear_position
+      ;;
+    set-ham)
+      shift
+      set_ham "$@"
+      ;;
+    set-wifi)
+      shift
+      set_wifi "$@"
+      ;;
+    status)
+      shift
+      status "$@"
+      ;;
+    monitor)
+      shift
+      monitor "$@"
+      ;;
+    proxy-start)
+      proxy_start
+      ;;
+    proxy-stop)
+      proxy_stop
+      ;;
+    proxy-autostart-install)
+      shift
+      proxy_autostart_install "$@"
+      ;;
+    proxy-autostart-remove)
+      shift
+      proxy_autostart_remove "$@"
+      ;;
+    proxy-autostart-status)
+      shift
+      proxy_autostart_status "$@"
+      ;;
+    proxy-status)
+      shift
+      proxy_status "$@"
+      ;;
+    proxy-log)
+      proxy_log
+      ;;
+    target-debug)
+      shift
+      target_debug "$@"
+      ;;
+    proxy-check)
+      shift
+      proxy_check "$@"
+      ;;
+    console)
+      shift
+      console_tui "$@"
+      ;;
+    doctor)
+      doctor
+      ;;
+    rawlog)
+      rawlog
+      ;;
+    shell)
+      shell_cmd
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      echo "Unknown command: ${command}" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
