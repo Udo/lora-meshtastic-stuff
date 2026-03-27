@@ -1,5 +1,7 @@
 .venv/
 .runtime/
+__pycache__/
+*.py[cod]
 docs/backup/
 console/contact/client.db
 console/contact/client.log

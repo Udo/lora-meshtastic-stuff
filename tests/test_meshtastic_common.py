@@ -16,6 +16,23 @@ from tools import _meshtastic_common as common
 
 
 class ResolveMeshtasticTargetTests(unittest.TestCase):
+    def test_windows_platform_uses_scripts_python_and_com_default(self) -> None:
+        with mock.patch("platform.system", return_value="Windows"):
+            self.assertEqual(common.venv_python_path(), REPO_ROOT / ".venv" / "Scripts" / "python.exe")
+            self.assertEqual(common.default_serial_port(), "COM3")
+
+    def test_macos_platform_uses_usbmodem_default(self) -> None:
+        with mock.patch("platform.system", return_value="Darwin"):
+            self.assertEqual(common.default_serial_port(), "/dev/tty.usbmodem1")
+
+    def test_linux_platform_prefers_existing_ttyacm_port(self) -> None:
+        def fake_exists(path: pathlib.Path) -> bool:
+            return str(path) == "/dev/ttyACM0"
+
+        with mock.patch("platform.system", return_value="Linux"):
+            with mock.patch.object(pathlib.Path, "exists", fake_exists):
+                self.assertEqual(common.default_serial_port(), "/dev/ttyACM0")
+
     def test_explicit_host_wins(self) -> None:
         target = common.resolve_meshtastic_target(port="/dev/custom", host="10.0.0.5", tcp_port=5555)
 

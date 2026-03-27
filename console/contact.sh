@@ -2,14 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_PYTHON="${ROOT_DIR}/.venv/bin/python"
+source "${ROOT_DIR}/setup/lib/meshtastic-os.sh"
+VENV_PYTHON="$(meshtastic_venv_python_path "${ROOT_DIR}/.venv")"
 PYTHON_BIN="${VENV_PYTHON}"
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
   else
-    echo "python3 is required" >&2
+    echo "python3 or python is required" >&2
     exit 1
   fi
 fi

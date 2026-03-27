@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import platform
 import socket
 import sys
 from dataclasses import dataclass
@@ -8,11 +9,53 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
-DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"
 DEFAULT_TCP_HOST = "127.0.0.1"
 DEFAULT_TCP_PORT = 4403
 PROXY_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "proxy-status.json"
+
+
+def host_os() -> str:
+    system = platform.system()
+    if system == "Linux":
+        return "linux"
+    if system == "Darwin":
+        return "macos"
+    if system == "Windows":
+        return "windows"
+    return "unknown"
+
+
+def venv_python_path() -> Path:
+    if host_os() == "windows":
+        return REPO_ROOT / ".venv" / "Scripts" / "python.exe"
+    return REPO_ROOT / ".venv" / "bin" / "python"
+
+
+def default_serial_port() -> str:
+    os_name = host_os()
+    candidates: list[str]
+
+    if os_name == "linux":
+        candidates = ["/dev/ttyUSB0", "/dev/ttyACM0"]
+    elif os_name == "macos":
+        candidates = sorted(str(path) for path in Path("/dev").glob("tty.usbserial*"))
+        candidates.extend(sorted(str(path) for path in Path("/dev").glob("tty.usbmodem*")))
+    else:
+        candidates = []
+
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return candidate
+
+    if os_name == "macos":
+        return "/dev/tty.usbmodem1"
+    if os_name == "windows":
+        return "COM3"
+    return "/dev/ttyUSB0"
+
+
+VENV_PYTHON = venv_python_path()
+DEFAULT_SERIAL_PORT = default_serial_port()
 
 
 def ensure_repo_python(env_guard: str) -> None:

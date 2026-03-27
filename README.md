@@ -1,6 +1,6 @@
 # lora-meshtastic-stuff
 
-This workspace now contains a verified and reproducible local workflow for a Meshnology N35 / Heltec V3 class ESP32-S3 LoRa board on `/dev/ttyUSB0`.
+This workspace now contains a verified and reproducible local workflow for a Meshnology N35 / Heltec V3 class ESP32-S3 LoRa board, with OS-specific serial-port defaults for Linux, macOS, and Windows.
 
 ## Current Device State
 
@@ -251,9 +251,11 @@ Filter notes:
 
 When the local proxy is running, the setup wrapper automatically routes `status`, `monitor`, and `console` through TCP on `127.0.0.1:4403` unless `MESHTASTIC_HOST` is set explicitly.
 
+The setup and console entrypoints now resolve their virtualenv interpreter and default serial-port name per OS. Linux keeps the existing `/dev/ttyUSB0` behavior, macOS defaults to a `/dev/tty.usbmodem*` style port, and Windows uses `COM` ports.
+
 ## Proxy
 
-The repo now includes a local serial-to-TCP proxy at [tools/meshtastic_proxy.py](tools/meshtastic_proxy.py). It owns `/dev/ttyUSB0` once and exposes a Meshtastic-compatible TCP endpoint for local clients such as the status tool, monitor, or Contact console.
+The repo now includes a local serial-to-TCP proxy at [tools/meshtastic_proxy.py](tools/meshtastic_proxy.py). It owns the configured serial port once and exposes a Meshtastic-compatible TCP endpoint for local clients such as the status tool, monitor, or Contact console.
 
 In practice the proxy now behaves as a local broker as well: direct repo tools auto-detect it and prefer it, and the broker layer arbitrates control writes so multiple local clients can safely share the same Meshtastic link.
 

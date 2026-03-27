@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/setup/lib/meshtastic-os.sh"
 VENV_DIR="${ROOT_DIR}/.venv"
-PORT="${MESHTASTIC_PORT:-/dev/ttyUSB0}"
+VENV_PYTHON="$(meshtastic_venv_python_path "${VENV_DIR}")"
+VENV_ACTIVATE="$(meshtastic_venv_activate_path "${VENV_DIR}")"
+DEFAULT_SERIAL_PORT="$(meshtastic_default_serial_port)"
+PORT="${MESHTASTIC_PORT:-${DEFAULT_SERIAL_PORT}}"
 BAUD="${MESHTASTIC_BAUD:-115200}"
 HOST="${MESHTASTIC_HOST:-}"
 TCP_PORT="${MESHTASTIC_TCP_PORT:-4403}"
@@ -95,7 +99,7 @@ Commands:
   help            Show this help
 
 Environment:
-  MESHTASTIC_PORT Override the serial device path (default: /dev/ttyUSB0)
+  MESHTASTIC_PORT Override the serial device path (default: OS-specific auto-detected port)
   MESHTASTIC_HOST Override Meshtastic access to use a TCP host instead of serial
   MESHTASTIC_TCP_PORT Override the TCP port used with MESHTASTIC_HOST or the local proxy (default: 4403)
   MESHTASTIC_PROXY_BIND_HOST Override the local proxy bind host (default: 127.0.0.1)
@@ -133,15 +137,40 @@ print_error() {
   printf '%s%s%s\n' "${COLOR_RED}" "$*" "${COLOR_RESET}" >&2
 }
 
+SYSTEM_PYTHON=''
+
+find_system_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3\n'
+    return 0
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    printf 'python\n'
+    return 0
+  fi
+
+  return 1
+}
+
 ensure_python() {
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 is required" >&2
+  if [[ -n "${SYSTEM_PYTHON}" ]]; then
+    return 0
+  fi
+
+  if ! SYSTEM_PYTHON="$(find_system_python)"; then
+    echo "python3 or python is required" >&2
     exit 1
   fi
 }
 
+run_system_python() {
+  ensure_python
+  "${SYSTEM_PYTHON}" "$@"
+}
+
 python_venv_package_hint() {
-  python3 - <<'PY'
+  run_system_python - <<'PY'
 import sys
 
 major = sys.version_info.major
@@ -186,7 +215,7 @@ create_venv() {
   local error_log package_hint
 
   error_log="$(mktemp)"
-  if python3 -m venv "${VENV_DIR}" 2>"${error_log}"; then
+  if run_system_python -m venv "${VENV_DIR}" 2>"${error_log}"; then
     rm -f "${error_log}"
     return 0
   fi
@@ -199,7 +228,7 @@ create_venv() {
       print_warn "python3 venv support is missing on this system. Attempting to install it automatically."
       if install_python_venv_support; then
         rm -f "${error_log}"
-        python3 -m venv "${VENV_DIR}"
+        run_system_python -m venv "${VENV_DIR}"
         return 0
       fi
       print_error "Automatic installation of python3 venv support failed."
@@ -215,8 +244,8 @@ create_venv() {
 }
 
 venv_is_healthy() {
-  [[ -x "${VENV_DIR}/bin/python" ]] || return 1
-  "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1
+  [[ -x "${VENV_PYTHON}" ]] || return 1
+  "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1
 }
 
 ensure_venv() {
@@ -229,9 +258,9 @@ ensure_venv() {
 
 ensure_python_packages() {
   ensure_venv
-  if ! "${VENV_DIR}/bin/python" -c 'import esptool, meshtastic, serial' >/dev/null 2>&1; then
-    "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-    "${VENV_DIR}/bin/python" -m pip install --upgrade meshtastic esptool pyserial
+  if ! "${VENV_PYTHON}" -c 'import esptool, meshtastic, serial' >/dev/null 2>&1; then
+    "${VENV_PYTHON}" -m pip install --upgrade pip
+    "${VENV_PYTHON}" -m pip install --upgrade meshtastic esptool pyserial
   fi
 }
 
@@ -298,7 +327,7 @@ prompt_yes_no() {
 run_in_venv() {
   ensure_python_packages
   # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
+  source "${VENV_ACTIVATE}"
   "$@"
 }
 
@@ -307,18 +336,14 @@ bootstrap() {
 }
 
 check_port() {
-  if [[ ! -e "${PORT}" ]]; then
+  if ! meshtastic_port_reference_is_valid "${PORT}"; then
     echo "Serial port not found: ${PORT}" >&2
     exit 1
   fi
 }
 
 resolve_port() {
-  if [[ -L "${PORT}" ]]; then
-    readlink -f "${PORT}"
-  else
-    printf '%s\n' "${PORT}"
-  fi
+  meshtastic_resolve_port "${PORT}"
 }
 
 check_firmware() {
@@ -370,7 +395,7 @@ wait_for_port() {
   local elapsed=0
 
   while (( elapsed < PORT_WAIT_SECONDS )); do
-    if [[ -e "${PORT}" ]]; then
+    if meshtastic_port_reference_is_valid "${PORT}"; then
       return 0
     fi
     sleep 1
@@ -386,7 +411,7 @@ ensure_runtime_dir() {
 }
 
 is_linux() {
-  [[ "$(uname -s)" == "Linux" ]]
+  meshtastic_is_linux
 }
 
 have_systemctl_user() {
@@ -679,7 +704,7 @@ ${extra_unit_lines}
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
-ExecStart=${VENV_DIR}/bin/python ${PROXY_TOOL} --serial-port ${PORT} --baud ${BAUD} --listen-host ${PROXY_BIND_HOST} --listen-port ${TCP_PORT} --status-file ${PROXY_STATUS_FILE}
+ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port ${PORT} --baud ${BAUD} --listen-host ${PROXY_BIND_HOST} --listen-port ${TCP_PORT} --status-file ${PROXY_STATUS_FILE}
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -917,7 +942,7 @@ read_proxy_status_field() {
     return 1
   fi
 
-  python3 - "${PROXY_STATUS_FILE}" "${field_path}" <<'PY'
+  run_system_python - "${PROXY_STATUS_FILE}" "${field_path}" <<'PY'
 import json
 import sys
 
@@ -946,7 +971,7 @@ proxy_print_json() {
   pid="$(proxy_pid || true)"
   manager="$(proxy_manager_label)"
 
-  python3 - "${health}" "${PROXY_STATUS_FILE}" "${PROXY_CONNECT_HOST}" "${TCP_PORT}" "${PORT}" "${PROXY_LOG_FILE}" "${pid}" "${manager}" "${PROXY_SYSTEMD_UNIT}" <<'PY'
+  run_system_python - "${health}" "${PROXY_STATUS_FILE}" "${PROXY_CONNECT_HOST}" "${TCP_PORT}" "${PORT}" "${PROXY_LOG_FILE}" "${pid}" "${manager}" "${PROXY_SYSTEMD_UNIT}" <<'PY'
 import json
 import pathlib
 import sys
@@ -990,7 +1015,7 @@ tcp_endpoint_ready() {
   local host="${1}"
   local port="${2}"
 
-  python3 - "${host}" "${port}" <<'PY' >/dev/null 2>&1
+  run_system_python - "${host}" "${port}" <<'PY' >/dev/null 2>&1
 import socket
 import sys
 
@@ -1037,7 +1062,7 @@ run_meshtastic_cli() {
 
   ensure_python_packages
   # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
+  source "${VENV_ACTIVATE}"
 
   if [[ -n "${host}" ]]; then
     meshtastic --host "${host}" "$@"
@@ -1053,10 +1078,10 @@ flash() {
   check_firmware
   ensure_python_packages
   # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
+  source "${VENV_ACTIVATE}"
   (
     cd "${FIRMWARE_DIR}"
-    PYTHON="${VENV_DIR}/bin/python" bash "${FIRMWARE_INSTALLER}" -p "${PORT}" -f "${FIRMWARE_BIN}"
+    PYTHON="${VENV_PYTHON}" bash "${FIRMWARE_INSTALLER}" -p "${PORT}" -f "${FIRMWARE_BIN}"
   )
   wait_for_port
 }
@@ -1466,7 +1491,7 @@ proxy_start() {
   fi
 
   check_port
-  nohup "${VENV_DIR}/bin/python" "${PROXY_TOOL}" \
+  nohup "${VENV_PYTHON}" "${PROXY_TOOL}" \
     --serial-port "${PORT}" \
     --baud "${BAUD}" \
     --listen-host "${PROXY_BIND_HOST}" \
@@ -1716,13 +1741,25 @@ doctor() {
   check_port
   echo "MESHTASTIC_PORT=${PORT}"
   echo "Resolved port: $(resolve_port)"
-  ls -l "${PORT}"
+  if ! meshtastic_is_windows; then
+    ls -l "${PORT}"
+  fi
   echo
   echo "Serial aliases:"
-  ls -l /dev/serial/by-id 2>/dev/null || true
+  if meshtastic_is_linux; then
+    ls -l /dev/serial/by-id 2>/dev/null || true
+  elif meshtastic_is_macos; then
+    ls -l /dev/tty.usb* 2>/dev/null || true
+  else
+    echo "  Alias listing is not available in this shell on Windows."
+  fi
   echo
   echo "Processes using ${PORT}:"
-  fuser "${PORT}" || true
+  if meshtastic_is_linux && command -v fuser >/dev/null 2>&1; then
+    fuser "${PORT}" || true
+  else
+    echo "  Process ownership check is only available on Linux with fuser."
+  fi
   echo
   echo "Meshtastic verbose probe:"
   if ! run_in_venv meshtastic --port "${PORT}" --debug --timeout 20 --info; then
@@ -1811,7 +1848,7 @@ PY
 }
 
 shell_cmd() {
-  echo "source ${VENV_DIR}/bin/activate"
+  echo "source ${VENV_ACTIVATE}"
 }
 
 main() {

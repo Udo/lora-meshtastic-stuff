@@ -40,12 +40,43 @@ class MeshtasticSetupWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "ready\n")
 
+    def test_windows_os_layer_uses_scripts_python_and_com_port(self) -> None:
+        result = run_wrapper_snippet(
+            """
+uname() { printf 'MINGW64_NT-10.0\\n'; }
+source "$ROOT_DIR/setup/lib/meshtastic-os.sh"
+printf '%s\\n' "$(meshtastic_venv_python_path "$ROOT_DIR/.venv")"
+printf '%s\\n' "$(meshtastic_default_serial_port)"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], f"{REPO_ROOT}/.venv/Scripts/python.exe")
+        self.assertEqual(lines[1], "COM3")
+
+    def test_macos_os_layer_uses_bin_python_and_usbmodem_default(self) -> None:
+        result = run_wrapper_snippet(
+            """
+uname() { printf 'Darwin\\n'; }
+source "$ROOT_DIR/setup/lib/meshtastic-os.sh"
+printf '%s\\n' "$(meshtastic_venv_python_path "$ROOT_DIR/.venv")"
+printf '%s\\n' "$(meshtastic_default_serial_port)"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], f"{REPO_ROOT}/.venv/bin/python")
+        self.assertEqual(lines[1], "/dev/tty.usbmodem1")
+
     def test_ensure_venv_recreates_broken_environment(self) -> None:
         result = run_wrapper_snippet(
             """
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 VENV_DIR="$tmpdir/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
 mkdir -p "$VENV_DIR/bin"
 cat > "$VENV_DIR/bin/python" <<'EOF'
 #!/usr/bin/env bash
@@ -82,6 +113,7 @@ ensure_venv
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 VENV_DIR="$tmpdir/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
 marker="$tmpdir/venv-installed"
 python3() {
   if [[ "$1" == "-m" && "$2" == "venv" ]]; then
@@ -119,6 +151,7 @@ create_venv
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 VENV_DIR="$tmpdir/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
 python3() {
   if [[ "$1" == "-m" && "$2" == "venv" ]]; then
     printf 'The virtual environment was not created successfully because ensurepip is not available.\n' >&2
