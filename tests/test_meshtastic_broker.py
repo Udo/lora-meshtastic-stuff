@@ -117,6 +117,27 @@ def make_fromradio_text_frame(payload: bytes = b"hello-radio") -> bytes:
     return encode_frame(from_radio.SerializeToString())
 
 
+def make_fromradio_direct_text_frame(payload: bytes, *, from_node: int = 42, to_node: int = 123) -> bytes:
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = to_node
+    from_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
+    from_radio.packet.decoded.payload = payload
+    return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_nodeinfo_frame(short_name: str, *, from_node: int = 42) -> bytes:
+    user = mesh_pb2.User()
+    user.short_name = short_name
+
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.NODEINFO_APP
+    from_radio.packet.decoded.payload = user.SerializeToString()
+    return encode_frame(from_radio.SerializeToString())
+
+
 def make_fromradio_private_frame(payload: bytes, *, from_node: int = 42) -> bytes:
     from_radio = mesh_pb2.FromRadio()
     setattr(from_radio.packet, "from", from_node)
@@ -410,6 +431,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.status_file = str(pathlib.Path(self.temp_dir.name) / "proxy-status.json")
+        self.config_file = str(pathlib.Path(self.temp_dir.name) / "service.env")
         self.plugins_dir = pathlib.Path(self.temp_dir.name) / "plugins"
         self.plugins_dir.mkdir()
         self.fake_serial = FakeSerialHandle()
@@ -421,6 +443,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             listen_port=0,
             reconnect_delay=0.01,
             status_file=self.status_file,
+            config_file=self.config_file,
             plugins_dir=str(self.plugins_dir),
             tick_interval=0.05,
         )
@@ -488,6 +511,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
                 self.assertEqual(status["denied_control_frames"], 1)
                 self.assertEqual(status["forwarded_control_frames"], 1)
                 self.assertEqual(status["serial_connected"], True)
+                self.assertEqual(status["config_file"], self.config_file)
                 self.assertTrue(str(status["control_owner"]).startswith("127.0.0.1:"))
 
     def test_proxy_recovers_from_unexpected_serial_exception(self) -> None:
@@ -636,6 +660,80 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
         wait_until(lambda: output_file.exists())
         self.assertEqual(output_file.read_text(encoding="utf-8").strip(), "generic:type=wormhole\nhello")
+
+    def test_direct_message_routes_to_first_word_handler_before_sender_or_generic(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-routing.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "hello.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('word:' + str(event.get('dm_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+        (dm_dir / "PEER.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('sender\\n')\n",
+            encoding="utf-8",
+        )
+        (dm_dir / "handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('generic\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=42))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello there", from_node=42, to_node=777))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["word:hello"])
+
+    def test_direct_message_falls_back_to_sender_short_name_then_generic(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-sender.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "PEER.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(str(event.get('sender_short_name')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=51))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"unknown-command payload", from_node=51, to_node=777))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["PEER"])
+
+    def test_direct_message_plugin_hot_reloads_under_dm_directory(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-reload.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        plugin_path = dm_dir / "handler.py"
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('v1:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"first", from_node=70, to_node=777))
+        wait_until(lambda: output_file.exists() and "v1:first" in output_file.read_text(encoding="utf-8"))
+
+        time.sleep(0.02)
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('v2:' + event['payload'].decode('utf-8').upper() + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"second", from_node=70, to_node=777))
+        wait_until(lambda: "v2:SECOND" in output_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["v1:first", "v2:SECOND"])
 
 
 class StoreForwardPluginTests(unittest.TestCase):

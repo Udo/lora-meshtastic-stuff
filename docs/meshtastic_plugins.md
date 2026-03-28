@@ -38,6 +38,15 @@ For `PRIVATE_APP`, the proxy supports subtype dispatch:
 
 Handlers are hot-reloaded when the file changes. Proxy restart is not required during development.
 
+Inbound direct text messages also support a dedicated handler namespace under `plugins/DM/`.
+For radio packets on `TEXT_MESSAGE_APP` whose destination is non-zero, the proxy tries these DM handlers in order and stops on the first callable match:
+
+- `plugins/DM/<first word of message text>.handler.py`
+- `plugins/DM/<sender short name>.handler.py`
+- `plugins/DM/handler.py`
+
+Sender short names are learned opportunistically from observed `NODEINFO_APP` traffic.
+
 ## Entry Points
 
 A plugin can define any of these functions:
@@ -68,6 +77,12 @@ The exact event dictionary varies by path, but the common fields include:
 - `packet_id`
 - `want_response`
 - `plugin_origin_likely`
+
+DM handlers also receive:
+
+- `direct_message`
+- `dm_command`
+- `sender_short_name`
 
 Client-originated events also include client metadata such as `client_id`.
 

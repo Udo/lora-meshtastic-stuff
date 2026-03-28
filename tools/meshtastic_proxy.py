@@ -39,6 +39,7 @@ CLIENT_SOCKET_TIMEOUT_SECONDS = 10.0
 CLIENT_KEEPALIVE_IDLE_SECONDS = 60
 CLIENT_KEEPALIVE_INTERVAL_SECONDS = 15
 CLIENT_KEEPALIVE_PROBES = 4
+DM_PLUGIN_DIRNAME = "DM"
 
 
 @dataclass(eq=False)
@@ -62,6 +63,7 @@ class MeshtasticProxy:
         listen_port: int,
         reconnect_delay: float,
         status_file: str | None = None,
+        config_file: str | None = None,
         plugins_dir: str | None = None,
         tick_interval: float = 1.0,
     ) -> None:
@@ -71,6 +73,7 @@ class MeshtasticProxy:
         self.listen_port = listen_port
         self.reconnect_delay = reconnect_delay
         self.status_file = status_file
+        self.config_file = config_file
         self.plugins_dir = plugins_dir or str(Path(__file__).resolve().parents[1] / "plugins")
         self.tick_interval = tick_interval
         self.runtime_dir = Path(status_file).resolve().parent if status_file else Path(__file__).resolve().parents[1] / ".runtime" / "meshtastic"
@@ -87,6 +90,7 @@ class MeshtasticProxy:
         self.plugins = MeshtasticPluginManager(self.plugins_dir, LOGGER)
         self._plugin_loop_guard: dict[str, float] = {}
         self._plugin_loop_guard_lock = threading.Lock()
+        self._node_short_names: dict[int, str] = {}
 
     def configure_client_socket(self, sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -117,6 +121,7 @@ class MeshtasticProxy:
             {
                 "listen_host": self.listen_host,
                 "listen_port": self.listen_port,
+                "config_file": self.config_file,
                 "plugins_dir": self.plugins_dir,
                 "plugin_state_dir": str(self.plugin_state_dir),
                 "plugins_loaded": self.plugins.plugin_names(),
@@ -440,6 +445,63 @@ class MeshtasticProxy:
         portnum = int(packet.decoded.portnum)
         return portnum, self._portnum_name(portnum)
 
+    def _remember_node_short_name(self, packet, portnum_name: str | None) -> None:
+        if packet is None or portnum_name != "NODEINFO_APP":
+            return
+        node_num = int(getattr(packet, "from", 0))
+        if not node_num:
+            return
+        user = mesh_pb2.User()
+        try:
+            user.ParseFromString(packet.decoded.payload)
+        except Exception:
+            LOGGER.debug("could not parse NODEINFO_APP payload for node %s", node_num, exc_info=True)
+            return
+        short_name = str(getattr(user, "short_name", "") or "").strip()
+        if short_name:
+            self._node_short_names[node_num] = short_name
+
+    def _direct_message_first_word(self, payload: bytes) -> str | None:
+        try:
+            text = payload.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return None
+        if not text:
+            return None
+        first_word = text.split(maxsplit=1)[0]
+        if not first_word or "/" in first_word or "\\" in first_word:
+            return None
+        return first_word
+
+    def _is_direct_message_event(self, event: dict[str, object]) -> bool:
+        if event.get("event_type") != "packet":
+            return False
+        if event.get("portnum_name") != "TEXT_MESSAGE_APP":
+            return False
+        packet_to = int(event.get("packet_to") or 0)
+        return packet_to != 0
+
+    def _dispatch_dm_plugins(self, event: dict[str, object], api: dict[str, object]) -> bool:
+        if not self._is_direct_message_event(event):
+            return False
+
+        candidate_paths: list[str] = []
+        first_word = self._direct_message_first_word(bytes(event.get("payload") or b""))
+        if first_word:
+            candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/{first_word}.handler.py")
+
+        packet_from = int(event.get("packet_from") or 0)
+        sender_short_name = self._node_short_names.get(packet_from)
+        if sender_short_name:
+            candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/{sender_short_name}.handler.py")
+
+        candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/handler.py")
+
+        event["direct_message"] = True
+        event["dm_command"] = first_word
+        event["sender_short_name"] = sender_short_name
+        return self.plugins.dispatch_first_packet(candidate_paths, event, api)
+
     def _handle_radio_plugins(self, observed_frames) -> None:
         api = self.build_plugin_api()
         for observed in observed_frames:
@@ -447,6 +509,7 @@ class MeshtasticProxy:
             portnum, portnum_name = self._packet_portnum(packet)
             if portnum is None:
                 continue
+            self._remember_node_short_name(packet, portnum_name)
             event = {
                 "event_type": "packet",
                 "direction": "radio_to_clients",
@@ -461,6 +524,7 @@ class MeshtasticProxy:
             }
             event.update(self._message_metadata(observed.message, packet, "radio_to_clients"))
             self.plugins.dispatch_packet(portnum_name, portnum, event, api)
+            self._dispatch_dm_plugins(event, api)
 
     def _handle_client_plugins(self, client: ClientConnection, forwarded_frames: list[bytes]) -> list[bytes]:
         if not forwarded_frames:
@@ -618,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--listen-port", type=int, default=DEFAULT_TCP_PORT, help="TCP port to bind")
     parser.add_argument("--reconnect-delay", type=float, default=2.0, help="Seconds between serial reconnect attempts")
     parser.add_argument("--status-file", help="Write proxy and broker status JSON to this file")
+    parser.add_argument("--config-file", help="Config file path loaded by the caller before launching the proxy")
     parser.add_argument("--plugins-dir", help="Directory containing *.handler.py proxy plugins")
     parser.add_argument("--tick-interval", type=float, default=1.0, help="Seconds between plugin tick callbacks")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
@@ -654,6 +719,7 @@ def main() -> int:
         listen_port=args.listen_port,
         reconnect_delay=args.reconnect_delay,
         status_file=args.status_file,
+        config_file=args.config_file,
         plugins_dir=args.plugins_dir,
         tick_interval=args.tick_interval,
     )

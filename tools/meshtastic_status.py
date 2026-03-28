@@ -18,6 +18,7 @@ from _meshtastic_common import (
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
+    summarize_proxy_runtime,
     style,
 )
 
@@ -160,6 +161,17 @@ def render_summary(iface) -> None:
     kv("WiFi SSID", config_scalar(network, "wifiSsid", local_config_raw.network, "wifi_ssid"))
     kv("Bluetooth enabled", config_scalar(bluetooth, "enabled", local_config_raw.bluetooth, "enabled"))
     kv("Primary channel URL", iface.localNode.getURL())
+
+    proxy_runtime = summarize_proxy_runtime()
+    endpoint_state = f"{proxy_runtime['host']}:{proxy_runtime['tcp_port']}"
+    endpoint_state += " reachable" if proxy_runtime["reachable"] else " unreachable"
+    kv("Proxy/broker", "running" if proxy_runtime["running"] else "stopped")
+    kv("Proxy endpoint", endpoint_state)
+    kv("Proxy connection", proxy_runtime["connection_status"])
+    if proxy_runtime["config_file_loaded"]:
+        kv("Proxy config loaded", proxy_runtime["config_file"])
+    elif proxy_runtime["persistent_config_file"]:
+        kv("Proxy config file", proxy_runtime["persistent_config_file"])
 
 
 def render_config(iface, sections: list[str]) -> None:

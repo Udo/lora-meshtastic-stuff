@@ -940,7 +940,7 @@ Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
 EnvironmentFile=${SERVICE_CONFIG_FILE}
-ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE}
+ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE} --config-file ${SERVICE_CONFIG_FILE}
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -1871,6 +1871,7 @@ proxy_start() {
     --listen-host "${PROXY_BIND_HOST}" \
     --listen-port "${TCP_PORT}" \
     --status-file "${PROXY_STATUS_FILE}" \
+    --config-file "${SERVICE_CONFIG_FILE}" \
     >>"${PROXY_LOG_FILE}" 2>&1 &
   echo "$!" > "${PROXY_PID_FILE}"
 

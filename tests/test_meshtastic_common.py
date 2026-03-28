@@ -1,3 +1,5 @@
+import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -92,6 +94,39 @@ class ResolveMeshtasticTargetTests(unittest.TestCase):
         self.assertEqual(details["selected"]["mode"], "tcp")
         self.assertEqual(details["selected"]["label"], "mesh.example:4444")
         self.assertIn("explicit --host", details["checks"][0].lower())
+
+    def test_summarize_proxy_runtime_reports_loaded_config_and_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_path = pathlib.Path(temp_dir) / "proxy-status.json"
+            service_config_path = pathlib.Path(temp_dir) / "service.env"
+            service_config_path.write_text("MESHTASTIC_PORT=/dev/ttyUSB0\n", encoding="utf-8")
+            status_path.write_text(
+                '{"listen_host": "127.0.0.1", "listen_port": 4403, "pid": ' + str(os.getpid()) + ', "serial_connected": true, "config_file": ' + json.dumps(str(service_config_path)) + '}\n',
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(common, "tcp_endpoint_ready", return_value=True):
+                summary = common.summarize_proxy_runtime(status_path, service_config_path)
+
+        self.assertEqual(summary["running"], True)
+        self.assertEqual(summary["reachable"], True)
+        self.assertEqual(summary["connection_status"], "connected")
+        self.assertEqual(summary["config_file"], str(service_config_path))
+        self.assertEqual(summary["config_file_loaded"], True)
+
+    def test_summarize_proxy_runtime_reports_stopped_without_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_path = pathlib.Path(temp_dir) / "proxy-status.json"
+            service_config_path = pathlib.Path(temp_dir) / "service.env"
+            service_config_path.write_text("MESHTASTIC_PORT=/dev/ttyUSB0\n", encoding="utf-8")
+
+            with mock.patch.object(common, "tcp_endpoint_ready", return_value=False):
+                summary = common.summarize_proxy_runtime(status_path, service_config_path)
+
+        self.assertEqual(summary["running"], False)
+        self.assertEqual(summary["connection_status"], "stopped")
+        self.assertEqual(summary["config_file_loaded"], False)
+        self.assertEqual(summary["persistent_config_file"], str(service_config_path))
 
 
 if __name__ == "__main__":

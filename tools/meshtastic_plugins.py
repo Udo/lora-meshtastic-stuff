@@ -34,7 +34,7 @@ class MeshtasticPluginManager:
 
     def plugin_names(self) -> list[str]:
         with self._lock:
-            return sorted(loaded.path.name for loaded in self._loaded.values() if loaded.path.exists())
+            return sorted(self._display_name(loaded.path) for loaded in self._loaded.values() if loaded.path.exists())
 
     def dispatch_packet(self, portnum_name: str | None, portnum: int | None, event: dict[str, object], api: dict[str, object]) -> None:
         for plugin in self._plugins_for_port(portnum_name, portnum, event):
@@ -55,11 +55,17 @@ class MeshtasticPluginManager:
             if callable(tick):
                 self._call(plugin.path, "tick", tick, {"event_type": "tick", "ts": time.time()}, api)
 
+    def dispatch_first_packet(self, relative_paths: list[str], event: dict[str, object], api: dict[str, object]) -> bool:
+        return self._dispatch_first(relative_paths, "handle_packet", event, api)
+
+    def dispatch_first_client_call(self, relative_paths: list[str], event: dict[str, object], api: dict[str, object]) -> bool:
+        return self._dispatch_first(relative_paths, "handle_client_call", event, api)
+
     def _all_plugins(self) -> list[LoadedPlugin]:
         self._prune_deleted_plugins()
         if not self.plugins_dir.exists():
             return []
-        paths = sorted(self.plugins_dir.glob(f"*{PLUGIN_SUFFIX}"))
+        paths = sorted(path for path in self.plugins_dir.rglob(f"*{PLUGIN_SUFFIX}") if path.is_file())
         return [plugin for path in paths if (plugin := self._load_plugin(path)) is not None]
 
     def _plugins_for_port(self, portnum_name: str | None, portnum: int | None, event: dict[str, object] | None = None) -> list[LoadedPlugin]:
@@ -98,6 +104,28 @@ class MeshtasticPluginManager:
         if portnum is not None:
             candidates.append(self.plugins_dir / f"{portnum}{PLUGIN_SUFFIX}")
         return candidates
+
+    def _dispatch_first(
+        self,
+        relative_paths: list[str],
+        function_name: str,
+        event: dict[str, object],
+        api: dict[str, object],
+    ) -> bool:
+        self._prune_deleted_plugins()
+        for relative_path in relative_paths:
+            path = self.plugins_dir / relative_path
+            if not path.exists():
+                continue
+            plugin = self._load_plugin(path)
+            if plugin is None:
+                continue
+            handler = getattr(plugin.module, function_name, None)
+            if not callable(handler):
+                continue
+            self._call(plugin.path, function_name, handler, event, api)
+            return True
+        return False
 
     def _private_subtype(self, event: dict[str, object] | None) -> str | None:
         if not event:
@@ -142,6 +170,12 @@ class MeshtasticPluginManager:
             for path in deleted:
                 self._loaded.pop(path, None)
 
+    def _display_name(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.plugins_dir))
+        except ValueError:
+            return path.name
+
     def _load_plugin(self, path: Path) -> LoadedPlugin | None:
         try:
             stat = path.stat()
@@ -168,7 +202,7 @@ class MeshtasticPluginManager:
         loaded = LoadedPlugin(path=path, module=module, mtime_ns=stat.st_mtime_ns)
         with self._lock:
             self._loaded[path] = loaded
-        self.logger.info("plugin loaded: %s", path.name)
+        self.logger.info("plugin loaded: %s", self._display_name(path))
         return loaded
 
     def _call(
@@ -180,12 +214,12 @@ class MeshtasticPluginManager:
         api: dict[str, object],
     ) -> None:
         plugin_api = dict(api)
-        plugin_api["plugin_name"] = path.name[: -len(PLUGIN_SUFFIX)]
+        plugin_api["plugin_name"] = self._display_name(path)[: -len(PLUGIN_SUFFIX)]
         plugin_api["plugin_path"] = str(path)
         try:
             handler(event, plugin_api)
         except Exception:
-            self.logger.exception("plugin handler failed: %s:%s", path.name, function_name)
+            self.logger.exception("plugin handler failed: %s:%s", self._display_name(path), function_name)
 
 
 def plugin_storage_path(runtime_dir: str | os.PathLike[str], plugin_name: str, relative_path: str = "") -> Path:

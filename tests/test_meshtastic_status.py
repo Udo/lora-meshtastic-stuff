@@ -3,6 +3,7 @@ import io
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -19,11 +20,49 @@ class FakeMyInfo:
     my_node_num = 123
 
 
+class FakeMetadata:
+    hwModel = "HELTEC_V3"
+    firmwareVersion = "2.7.13"
+
+
+class FakeLocalConfigSection:
+    def __init__(self, **values) -> None:
+        self._values = values
+        self.DESCRIPTOR = type("Descriptor", (), {"fields_by_name": {}})()
+
+    def __getattr__(self, name: str):
+        return self._values.get(name)
+
+
+class FakeLocalConfig:
+    def __init__(self) -> None:
+        self.device = FakeLocalConfigSection(role="CLIENT")
+        self.lora = FakeLocalConfigSection(modem_preset="LONG_FAST", tx_power=20)
+        self.network = FakeLocalConfigSection(wifi_enabled=True, wifi_ssid="mesh")
+        self.position = FakeLocalConfigSection(fixed_position=False)
+        self.bluetooth = FakeLocalConfigSection(enabled=True)
+
+
+class FakeLocalNode:
+    def __init__(self) -> None:
+        self.localConfig = FakeLocalConfig()
+
+    def getURL(self) -> str:
+        return "https://mesh.example/channel"
+
+
 class FakeInterface:
     def __init__(self) -> None:
+        self.metadata = FakeMetadata()
         self.myInfo = FakeMyInfo()
+        self.localNode = FakeLocalNode()
         self.nodes = {
-            "self": {"num": 123, "user": {"id": "!self", "shortName": "SELF"}},
+            "self": {
+                "num": 123,
+                "user": {"id": "!self", "shortName": "SELF", "longName": "Self Node"},
+                "deviceMetrics": {"batteryLevel": 87, "voltage": 4.05, "uptimeSeconds": 7200},
+                "position": {"latitude": 52.52, "longitude": 13.405, "altitude": 35},
+            },
             "good-direct": {
                 "num": 456,
                 "snr": 6.0,
@@ -150,6 +189,51 @@ class MeshtasticStatusTelemetryTests(unittest.TestCase):
         self.assertIn("Telemetry Cached", rendered)
         self.assertIn("environmentMetrics", rendered)
         self.assertIn("22.0", rendered)
+
+
+class MeshtasticStatusSummaryTests(unittest.TestCase):
+    def test_render_summary_includes_proxy_runtime_and_config_source(self) -> None:
+        output = io.StringIO()
+
+        with mock.patch.object(status, "to_dict") as to_dict_mock:
+            to_dict_mock.side_effect = [
+                {"hwModel": "HELTEC_V3", "firmwareVersion": "2.7.13"},
+                {"pioEnv": "heltec-v3", "rebootCount": 2},
+                {
+                    "device": {"role": "CLIENT"},
+                    "lora": {"region": "EU_868", "modemPreset": "LONG_FAST", "txPower": 20},
+                    "network": {"wifiEnabled": True, "wifiSsid": "mesh"},
+                    "position": {"fixedPosition": False},
+                    "bluetooth": {"enabled": True},
+                },
+            ]
+            with mock.patch.object(
+                status,
+                "summarize_proxy_runtime",
+                return_value={
+                    "running": True,
+                    "reachable": True,
+                    "connection_status": "connected",
+                    "host": "127.0.0.1",
+                    "tcp_port": 4403,
+                    "config_file_loaded": True,
+                    "config_file": "/tmp/meshtastic/service.env",
+                    "persistent_config_file": "/tmp/meshtastic/service.env",
+                },
+            ):
+                with contextlib.redirect_stdout(output):
+                    status.render_summary(FakeInterface())
+
+        rendered = output.getvalue()
+        self.assertIn("Meshtastic Summary", rendered)
+        self.assertIn("Proxy/broker", rendered)
+        self.assertIn("running", rendered)
+        self.assertIn("Proxy endpoint", rendered)
+        self.assertIn("127.0.0.1:4403 reachable", rendered)
+        self.assertIn("Proxy connection", rendered)
+        self.assertIn("connected", rendered)
+        self.assertIn("Proxy config loaded", rendered)
+        self.assertIn("/tmp/meshtastic/service.env", rendered)
 
 
 if __name__ == "__main__":

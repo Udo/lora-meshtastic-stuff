@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TCP_HOST = "127.0.0.1"
 DEFAULT_TCP_PORT = 4403
 PROXY_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "proxy-status.json"
+SERVICE_CONFIG_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "service.env"
 
 
 def host_os() -> str:
@@ -182,12 +183,77 @@ def load_proxy_status(status_file: Path = PROXY_STATUS_FILE) -> dict[str, object
         return {}
 
 
+def pid_is_running(pid_value: object) -> bool:
+    try:
+        pid = int(pid_value)
+    except (TypeError, ValueError):
+        return False
+
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def tcp_endpoint_ready(host: str, port: int, timeout: float = 1.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def summarize_proxy_runtime(
+    status_file: Path | None = None,
+    service_config_file: Path | None = None,
+) -> dict[str, object]:
+    status_file = status_file or PROXY_STATUS_FILE
+    service_config_file = service_config_file or SERVICE_CONFIG_FILE
+    snapshot = load_proxy_status(status_file)
+
+    host = str(snapshot.get("listen_host") or env_proxy_host())
+    listen_port = snapshot.get("listen_port")
+    tcp_port = listen_port if isinstance(listen_port, int) else env_tcp_port()
+    reachable = tcp_endpoint_ready(host, tcp_port)
+    running = pid_is_running(snapshot.get("pid")) or reachable
+
+    serial_connected_value = snapshot.get("serial_connected")
+    serial_connected = serial_connected_value if isinstance(serial_connected_value, bool) else None
+    if not running:
+        connection_status = "stopped"
+    elif serial_connected is True:
+        connection_status = "connected"
+    elif serial_connected is False:
+        connection_status = "disconnected"
+    else:
+        connection_status = "unknown"
+
+    config_file_value = snapshot.get("config_file")
+    config_file = str(config_file_value) if isinstance(config_file_value, str) and config_file_value.strip() else None
+    persistent_config_file = str(service_config_file) if service_config_file.exists() else None
+
+    return {
+        "running": running,
+        "reachable": reachable,
+        "connection_status": connection_status,
+        "host": host,
+        "tcp_port": tcp_port,
+        "pid": snapshot.get("pid"),
+        "snapshot": snapshot,
+        "snapshot_exists": status_file.exists(),
+        "snapshot_file": str(status_file),
+        "config_file": config_file,
+        "config_file_loaded": config_file is not None,
+        "persistent_config_file": persistent_config_file,
+    }
 
 
 def detect_proxy_target(status_file: Path | None = None) -> MeshtasticTarget | None:

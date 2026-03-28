@@ -272,6 +272,14 @@ For `PRIVATE_APP`, the router now supports subtype dispatch:
 - if the payload starts with `type=<value>`, it tries `plugins/PRIVATE_APP.<value>.handler.py`
 - if no typed handler exists, it falls back to `plugins/PRIVATE_APP.handler.py`
 
+Inbound direct text messages also support a DM handler namespace:
+
+- `plugins/DM/<first word>.handler.py`
+- `plugins/DM/<sender short name>.handler.py`
+- `plugins/DM/handler.py`
+
+The DM router only applies to incoming `TEXT_MESSAGE_APP` packets whose destination is non-zero, and it stops at the first callable match.
+
 Supported plugin entry points:
 
 - `handle_packet(event, api)` for radio-to-client traffic seen from the attached node
