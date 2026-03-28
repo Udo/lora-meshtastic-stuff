@@ -254,6 +254,50 @@ main plugins STORE_FORWARD_APP stats
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "plugins:STORE_FORWARD_APP stats\n")
 
+    def test_main_dispatches_get(self) -> None:
+        result = run_wrapper_snippet(
+            """
+get_pref() { printf 'get:%s\n' "$*"; }
+main get range_test.sender
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "get:range_test.sender\n")
+
+    def test_main_dispatches_set(self) -> None:
+        result = run_wrapper_snippet(
+            """
+set_pref() { printf 'set:%s\n' "$*"; }
+main set range_test.sender 0
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "set:range_test.sender 0\n")
+
+    def test_get_pref_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+get_pref range_test.sender
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--get range_test.sender\n")
+
+    def test_set_pref_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+set_pref range_test.sender 0
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--set range_test.sender 0\n")
+
     def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
         result = run_wrapper_snippet(
             """

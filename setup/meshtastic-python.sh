@@ -87,6 +87,8 @@ Commands:
   nodedb-reset    Clear the connected node's known-node database
   contacts        List contacts or manage NodeDB entries (list|keys|remove|favorite|unfavorite|ignore|unignore)
   export-config   Export the node config as YAML to stdout
+  get             Read a Meshtastic config or module field by name
+  set             Set a Meshtastic config or module field by name
   set-name        Set the node long and short names
   set-role        Set the Meshtastic device role (node type)
   set-region      Set the LoRa region on the connected node
@@ -1551,6 +1553,29 @@ export_config() {
   run_meshtastic_cli --export-config
 }
 
+get_pref() {
+  local field="${1:-}"
+
+  if [[ $# -ne 1 || -z "${field}" ]]; then
+    echo "Usage: setup/meshtastic-python.sh get <FIELD>" >&2
+    exit 1
+  fi
+
+  run_meshtastic_cli --get "${field}"
+}
+
+set_pref() {
+  local field="${1:-}"
+  local value="${2:-}"
+
+  if [[ $# -ne 2 || -z "${field}" || -z "${value}" ]]; then
+    echo "Usage: setup/meshtastic-python.sh set <FIELD> <VALUE>" >&2
+    exit 1
+  fi
+
+  run_meshtastic_cli --set "${field}" "${value}"
+}
+
 set_name() {
   local long_name="${1:-}"
   local short_name="${2:-}"
@@ -2234,6 +2259,14 @@ main() {
       ;;
     export-config)
       export_config
+      ;;
+    get)
+      shift
+      get_pref "$@"
+      ;;
+    set)
+      shift
+      set_pref "$@"
       ;;
     set-name)
       shift

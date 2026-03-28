@@ -31,6 +31,8 @@ Common commands:
 ./setup/meshtastic-python.sh contacts keys
 ./setup/meshtastic-python.sh contacts remove !0439d098
 ./setup/meshtastic-python.sh export-config
+./setup/meshtastic-python.sh get range_test.sender
+./setup/meshtastic-python.sh set range_test.sender 0
 ./setup/meshtastic-python.sh set-name "My Node" "MYND"
 ./setup/meshtastic-python.sh set-role CLIENT
 ./setup/meshtastic-python.sh set-region EU_868
@@ -229,6 +231,19 @@ Notes:
 - `contacts keys` focuses on the current peer public keys known to the node.
 - `contacts remove`, `favorite`, `unfavorite`, `ignore`, and `unignore` forward to the upstream Meshtastic admin actions.
 - There is no real Meshtastic CLI operation to manually inject an arbitrary new contact plus public key; contacts are learned from on-air node info.
+
+Low-level config passthrough:
+
+```bash
+./setup/meshtastic-python.sh get range_test.sender
+./setup/meshtastic-python.sh set range_test.sender 0
+./setup/meshtastic-python.sh get telemetry.environment_update_interval
+./setup/meshtastic-python.sh set telemetry.environment_update_interval 900
+```
+
+These map directly to the upstream Meshtastic `--get` and `--set` field access pattern, but keep the repo's normal target-selection behavior.
+
+For the full field-path reference supported by this wrapper surface, see [docs/meshtastic_get_set_fields.md](docs/meshtastic_get_set_fields.md).
 
 The summary view now reports the modem preset explicitly, even when the device is using the protobuf default enum value such as `LONG_FAST`.
 
