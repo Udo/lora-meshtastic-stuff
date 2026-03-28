@@ -737,10 +737,28 @@ class MeshtasticProxy:
         self.send_toradio(to_radio)
 
     def _bootstrap_metadata_from_status(self) -> None:
-        """Run meshtastic_status.py node-info via the proxy's own TCP port and apply the result."""
+        """Run meshtastic_status.py node-info via the proxy's own TCP port and apply the result.
+
+        Waits briefly first so that config-dump frames from the initial handshake can populate
+        metadata via _remember_config_frame — which avoids competing with the phone app for the
+        single TCP slot.  The subprocess only runs if we still lack short_name or channels after
+        the wait.
+        """
         if not self._bootstrap_lock.acquire(blocking=False):
             return
         try:
+            # Give config-dump frames time to arrive (they come within ~3s of any client connecting).
+            for _ in range(15):
+                if self._local_short_name and self._channel_names_by_num:
+                    break
+                time.sleep(1)
+            if self._local_short_name and self._channel_names_by_num:
+                LOGGER.info(
+                    "bootstrap skipped: already have short_name=%r, %d channel(s) from config-dump frames",
+                    self._local_short_name,
+                    len(self._channel_names_by_num),
+                )
+                return
             cmd = [
                 str(VENV_PYTHON),
                 str(STATUS_SCRIPT),
@@ -1067,6 +1085,7 @@ class MeshtasticProxy:
                 current_event["direct_message"] = True
                 current_event["dm_command"] = self._direct_message_first_word(bytes(current_event.get("payload") or b""))
                 current_event["sender_short_name"] = self._node_short_names.get(int(current_event.get("packet_from") or 0))
+                current_event["local_short_name"] = self._local_short_name
                 result = self.plugins.call_relative(relative_path, "handle_packet", current_event, api)
                 if result is None and not (Path(self.plugins_dir) / relative_path).exists():
                     continue
