@@ -716,6 +716,7 @@ read_proxy_status_field() {
         control_session_confirmed) printf 'false\n' ;;
         control_session_expires_in) printf '9.5\n' ;;
         dropped_radio_bytes) printf '17\n' ;;
+        ignored_serial_debug_bytes) printf '64\n' ;;
         invalid_radio_frames) printf '3\n' ;;
         *) return 1 ;;
     esac
@@ -726,6 +727,7 @@ proxy_status
 
                 self.assertEqual(result.returncode, 0, msg=result.stderr)
                 self.assertIn("  Dropped radio bytes: 17\n", result.stdout)
+                self.assertIn("  Ignored serial debug bytes: 64\n", result.stdout)
                 self.assertIn("  Invalid radio frames: 3\n", result.stdout)
 
     def test_have_systemctl_user_requires_user_bus_environment(self) -> None:

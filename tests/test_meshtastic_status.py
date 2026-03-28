@@ -226,6 +226,7 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
                     "tcp_port": 4403,
                     "snapshot": {
                         "dropped_radio_bytes": 17,
+                        "ignored_serial_debug_bytes": 64,
                         "invalid_radio_frames": 3,
                     },
                     "config_file_loaded": True,
@@ -251,6 +252,8 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         self.assertIn("connected", rendered)
         self.assertIn("Dropped radio bytes", rendered)
         self.assertIn("17", rendered)
+        self.assertIn("Ignored serial debug bytes", rendered)
+        self.assertIn("64", rendered)
         self.assertIn("Invalid radio frames", rendered)
         self.assertIn("3", rendered)
         self.assertIn("Proxy config loaded", rendered)

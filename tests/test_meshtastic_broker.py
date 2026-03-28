@@ -517,17 +517,21 @@ class MeshtasticBrokerTests(unittest.TestCase):
     def test_textual_radio_noise_is_labeled_as_non_protocol_and_rate_limited(self) -> None:
         noise = b"\x1b[34mDEBUG\x1b[0m | SerialConsole FromRadio=START\n"
 
-        with self.assertLogs("meshtastic_broker", level="WARNING") as logs:
+        with self.assertLogs("meshtastic_broker", level="INFO") as logs:
             self.broker.observe_radio_bytes(noise)
             self.clock.advance(1.0)
             self.broker.observe_radio_bytes(noise)
 
         combined = "\n".join(logs.output)
-        self.assertIn("non-protocol serial byte(s)", combined)
-        self.assertEqual(combined.count("non-protocol serial byte(s)"), 1)
+        self.assertIn("ignored 43 serial debug byte(s)", combined)
+        self.assertEqual(combined.count("serial debug byte(s)"), 1)
+
+        snapshot = self.broker.snapshot()
+        self.assertEqual(snapshot["ignored_serial_debug_bytes"], len(noise) * 2)
+        self.assertEqual(snapshot["dropped_radio_bytes"], 0)
 
         self.clock.advance(5.0)
-        with self.assertLogs("meshtastic_broker", level="WARNING") as later_logs:
+        with self.assertLogs("meshtastic_broker", level="INFO") as later_logs:
             self.broker.observe_radio_bytes(noise)
 
         self.assertIn("suppressed 1 similar chunk(s)", "\n".join(later_logs.output))
@@ -774,6 +778,20 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         wait_until(lambda: self.read_status().get("dropped_radio_bytes") == 7)
         status = self.read_status()
         self.assertEqual(status["dropped_radio_bytes"], 7)
+        self.assertEqual(status["ignored_serial_debug_bytes"], 0)
+
+    def test_proxy_counts_serial_debug_bytes_separately_from_malformed_bytes(self) -> None:
+        noise = b"\x1b[34mDEBUG\x1b[0m | SerialConsole FromRadio=START\n"
+
+        with self.assertLogs("meshtastic_proxy", level="INFO") as logs:
+            self.fake_serial.inject_read(noise)
+            wait_until(lambda: self.read_status().get("ignored_serial_debug_bytes") == len(noise))
+
+        combined = "\n".join(logs.output)
+        self.assertIn("ignored 43 serial debug byte(s)", combined)
+        status = self.read_status()
+        self.assertEqual(status["ignored_serial_debug_bytes"], len(noise))
+        self.assertEqual(status["dropped_radio_bytes"], 0)
 
     def test_plugin_tick_errors_are_logged_and_do_not_stop_tick_loop(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "tick-after-error.txt"

@@ -2133,7 +2133,7 @@ proxy_stop() {
 }
 
 proxy_status() {
-  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes invalid_radio_frames
+  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes ignored_serial_debug_bytes invalid_radio_frames
   json_output="${1:-}"
   manager="$(proxy_manager_label)"
 
@@ -2154,6 +2154,7 @@ proxy_status() {
     session_confirmed="$(read_proxy_status_field control_session_confirmed || true)"
     session_expires_in="$(read_proxy_status_field control_session_expires_in || true)"
     dropped_radio_bytes="$(read_proxy_status_field dropped_radio_bytes || true)"
+    ignored_serial_debug_bytes="$(read_proxy_status_field ignored_serial_debug_bytes || true)"
     invalid_radio_frames="$(read_proxy_status_field invalid_radio_frames || true)"
     if [[ -n "${clients}" ]]; then
       printf '  Clients: %s\n' "${clients}"
@@ -2184,6 +2185,9 @@ proxy_status() {
     fi
     if [[ -n "${dropped_radio_bytes}" ]]; then
       printf '  Dropped radio bytes: %s\n' "${dropped_radio_bytes}"
+    fi
+    if [[ -n "${ignored_serial_debug_bytes}" ]]; then
+      printf '  Ignored serial debug bytes: %s\n' "${ignored_serial_debug_bytes}"
     fi
     if [[ -n "${invalid_radio_frames}" ]]; then
       printf '  Invalid radio frames: %s\n' "${invalid_radio_frames}"

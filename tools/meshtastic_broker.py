@@ -161,6 +161,7 @@ class MeshtasticBroker:
         self.forwarded_control_frames = 0
         self.observed_admin_responses = 0
         self.dropped_radio_bytes = 0
+        self.ignored_serial_debug_bytes = 0
         self.invalid_radio_frames = 0
         self.last_session_passkey = ""
         self.last_session_passkey_seen_at: float | None = None
@@ -168,7 +169,9 @@ class MeshtasticBroker:
         self._last_malformed_radio_log_at = float("-inf")
         self._suppressed_malformed_radio_chunks = 0
         self._suppressed_malformed_radio_bytes = 0
-        self._suppressed_malformed_radio_text_bytes = 0
+        self._last_serial_debug_log_at = float("-inf")
+        self._suppressed_serial_debug_chunks = 0
+        self._suppressed_serial_debug_bytes = 0
 
     def _looks_like_text_console_noise(self, data: bytes) -> bool:
         if not data:
@@ -186,38 +189,57 @@ class MeshtasticBroker:
         sample = stripped[:80].decode("utf-8", errors="replace")
         return " ".join(sample.split())
 
+    def _split_raw_radio_chunks(self, raw_chunks: list[bytes]) -> tuple[list[bytes], list[bytes]]:
+        serial_debug_chunks: list[bytes] = []
+        malformed_chunks: list[bytes] = []
+        for chunk in raw_chunks:
+            if self._looks_like_text_console_noise(chunk):
+                serial_debug_chunks.append(chunk)
+            else:
+                malformed_chunks.append(chunk)
+        return serial_debug_chunks, malformed_chunks
+
+    def _log_serial_debug_chunks(self, raw_chunks: list[bytes]) -> None:
+        ignored_len = sum(len(chunk) for chunk in raw_chunks)
+        if ignored_len <= 0:
+            return
+
+        now = self.clock()
+        if now - self._last_serial_debug_log_at < MALFORMED_RADIO_LOG_INTERVAL_SECONDS:
+            self._suppressed_serial_debug_chunks += len(raw_chunks)
+            self._suppressed_serial_debug_bytes += ignored_len
+            return
+
+        suppressed_chunks = self._suppressed_serial_debug_chunks
+        suppressed_bytes = self._suppressed_serial_debug_bytes
+        self._suppressed_serial_debug_chunks = 0
+        self._suppressed_serial_debug_bytes = 0
+        self._last_serial_debug_log_at = now
+
+        sample_text = self._raw_chunk_sample_text(raw_chunks[0]) or raw_chunks[0][:24].hex()
+        message = "ignored %s serial debug byte(s) before frame sync; sample_text=%r"
+        args: tuple[object, ...] = (ignored_len, sample_text)
+        if suppressed_bytes:
+            message += "; suppressed %s similar chunk(s) totaling %s byte(s)"
+            args += (suppressed_chunks, suppressed_bytes)
+        self.logger.info(message, *args)
+
     def _log_malformed_radio_chunks(self, raw_chunks: list[bytes]) -> None:
         dropped_len = sum(len(chunk) for chunk in raw_chunks)
         if dropped_len <= 0:
             return
 
-        text_like = any(self._looks_like_text_console_noise(chunk) for chunk in raw_chunks)
         now = self.clock()
         if now - self._last_malformed_radio_log_at < MALFORMED_RADIO_LOG_INTERVAL_SECONDS:
             self._suppressed_malformed_radio_chunks += len(raw_chunks)
             self._suppressed_malformed_radio_bytes += dropped_len
-            if text_like:
-                self._suppressed_malformed_radio_text_bytes += dropped_len
             return
 
         suppressed_chunks = self._suppressed_malformed_radio_chunks
         suppressed_bytes = self._suppressed_malformed_radio_bytes
-        suppressed_text_bytes = self._suppressed_malformed_radio_text_bytes
         self._suppressed_malformed_radio_chunks = 0
         self._suppressed_malformed_radio_bytes = 0
-        self._suppressed_malformed_radio_text_bytes = 0
         self._last_malformed_radio_log_at = now
-
-        if text_like:
-            sample_text = self._raw_chunk_sample_text(raw_chunks[0]) or raw_chunks[0][:24].hex()
-            message = "dropping %s non-protocol serial byte(s) before frame sync; sample_text=%r"
-            args: tuple[object, ...] = (dropped_len, sample_text)
-            if suppressed_bytes:
-                suffix = f", mostly text/debug output ({suppressed_text_bytes} byte(s))" if suppressed_text_bytes else ""
-                message += "; suppressed %s similar chunk(s) totaling %s byte(s)%s"
-                args += (suppressed_chunks, suppressed_bytes, suffix)
-            self.logger.warning(message, *args)
-            return
 
         message = "dropping %s malformed radio byte(s) before frame sync; sample=%s"
         args = (dropped_len, raw_chunks[0][:24].hex())
@@ -260,9 +282,13 @@ class MeshtasticBroker:
         parsed = self.radio_parser.feed(data)
         observed: list[ObservedRadioFrame] = []
         if parsed.raw_chunks:
-            dropped_len = sum(len(chunk) for chunk in parsed.raw_chunks)
-            self.dropped_radio_bytes += dropped_len
-            self._log_malformed_radio_chunks(parsed.raw_chunks)
+            serial_debug_chunks, malformed_chunks = self._split_raw_radio_chunks(parsed.raw_chunks)
+            if serial_debug_chunks:
+                self.ignored_serial_debug_bytes += sum(len(chunk) for chunk in serial_debug_chunks)
+                self._log_serial_debug_chunks(serial_debug_chunks)
+            if malformed_chunks:
+                self.dropped_radio_bytes += sum(len(chunk) for chunk in malformed_chunks)
+                self._log_malformed_radio_chunks(malformed_chunks)
         for frame in parsed.frames:
             try:
                 message = decode_fromradio_frame(frame)
@@ -349,6 +375,7 @@ class MeshtasticBroker:
             "denied_control_frames": self.denied_control_frames,
             "dropped_radio_bytes": self.dropped_radio_bytes,
             "forwarded_control_frames": self.forwarded_control_frames,
+            "ignored_serial_debug_bytes": self.ignored_serial_debug_bytes,
             "invalid_radio_frames": self.invalid_radio_frames,
             "observed_admin_responses": self.observed_admin_responses,
             "last_session_passkey": self.last_session_passkey or None,

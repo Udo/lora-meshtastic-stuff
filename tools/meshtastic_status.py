@@ -262,9 +262,12 @@ def render_summary(iface) -> None:
     proxy_snapshot = proxy_runtime.get("snapshot") if isinstance(proxy_runtime, dict) else {}
     if isinstance(proxy_snapshot, dict):
         dropped_radio_bytes = proxy_snapshot.get("dropped_radio_bytes")
+        ignored_serial_debug_bytes = proxy_snapshot.get("ignored_serial_debug_bytes")
         invalid_radio_frames = proxy_snapshot.get("invalid_radio_frames")
         if dropped_radio_bytes is not None:
             kv("Dropped radio bytes", dropped_radio_bytes)
+        if ignored_serial_debug_bytes is not None:
+            kv("Ignored serial debug bytes", ignored_serial_debug_bytes)
         if invalid_radio_frames is not None:
             kv("Invalid radio frames", invalid_radio_frames)
     if proxy_runtime["config_file_loaded"]:
