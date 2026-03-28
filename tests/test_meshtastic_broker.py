@@ -66,6 +66,18 @@ def make_want_config_frame() -> bytes:
     return make_frame(to_radio)
 
 
+def make_heartbeat_frame(nonce: int = 1) -> bytes:
+    to_radio = mesh_pb2.ToRadio()
+    to_radio.heartbeat.nonce = nonce
+    return make_frame(to_radio)
+
+
+def make_disconnect_frame() -> bytes:
+    to_radio = mesh_pb2.ToRadio()
+    to_radio.disconnect = True
+    return make_frame(to_radio)
+
+
 def make_text_frame() -> bytes:
     to_radio = mesh_pb2.ToRadio()
     to_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
@@ -493,6 +505,7 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(len(result.serial_chunks), 1)
         self.assertEqual(result.direct_chunks, [])
         self.assertIsNone(self.broker.control_owner_id)
+        self.assertEqual(self.broker.host_session_owner_id, "client-a")
 
     def test_second_client_can_also_send_want_config_handshake(self) -> None:
         self.broker.handle_client_bytes("client-a", make_want_config_frame())
@@ -502,7 +515,43 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(len(result.serial_chunks), 1)
         self.assertEqual(result.direct_chunks, [])
         self.assertIsNone(self.broker.control_owner_id)
+        self.assertEqual(self.broker.host_session_owner_id, "client-b")
         self.assertEqual(self.broker.denied_control_frames, 0)
+
+    def test_non_owner_heartbeat_is_suppressed_for_host_session(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        result = self.broker.handle_client_bytes("client-b", make_heartbeat_frame())
+
+        self.assertEqual(result.serial_chunks, [])
+        self.assertEqual(result.direct_chunks, [])
+        self.assertEqual(self.broker.host_session_owner_id, "client-a")
+
+    def test_owner_heartbeat_refreshes_host_session(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+        first_expiry = self.broker.host_session_expires_at
+        self.clock.advance(10.0)
+
+        result = self.broker.handle_client_bytes("client-a", make_heartbeat_frame())
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertGreater(self.broker.host_session_expires_at, first_expiry)
+
+    def test_non_owner_disconnect_does_not_terminate_host_session(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        result = self.broker.handle_client_bytes("client-b", make_disconnect_frame())
+
+        self.assertEqual(result.serial_chunks, [])
+        self.assertEqual(self.broker.host_session_owner_id, "client-a")
+
+    def test_owner_disconnect_releases_host_session(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        result = self.broker.handle_client_bytes("client-a", make_disconnect_frame())
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertIsNone(self.broker.host_session_owner_id)
 
     def test_non_admin_traffic_is_not_blocked(self) -> None:
         self.broker.handle_client_bytes("client-a", make_admin_write_frame())

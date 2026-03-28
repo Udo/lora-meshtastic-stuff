@@ -10,6 +10,7 @@ from meshtastic.stream_interface import HEADER_LEN, MAX_TO_FROM_RADIO_SIZE, STAR
 LOGGER = logging.getLogger("meshtastic_broker")
 PROVISIONAL_CONTROL_LEASE_SECONDS = 10.0
 ADMIN_SESSION_LEASE_SECONDS = 300.0
+HOST_SESSION_LEASE_SECONDS = 120.0
 MALFORMED_RADIO_LOG_INTERVAL_SECONDS = 5.0
 UART_DEBUG_LOG_INTERVAL_SECONDS = 5.0
 ANSI_ESCAPE_RE = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
@@ -253,6 +254,8 @@ class MeshtasticBroker:
         self.control_owner_id: str | None = None
         self.control_owner_confirmed = False
         self.control_owner_expires_at: float | None = None
+        self.host_session_owner_id: str | None = None
+        self.host_session_expires_at: float | None = None
         self.radio_parser = FrameParser(strip_text_prefix=True)
         self.denied_control_frames = 0
         self.forwarded_control_frames = 0
@@ -356,9 +359,13 @@ class MeshtasticBroker:
         if self.control_owner_id == client_id:
             self.logger.info("released control session from %s", client_id)
             self._clear_control_owner()
+        if self.host_session_owner_id == client_id:
+            self.logger.info("released host session from %s", client_id)
+            self._clear_host_session_owner()
 
     def handle_client_bytes(self, client_id: str, data: bytes) -> BrokerDecision:
         self._expire_control_owner_if_needed()
+        self._expire_host_session_owner_if_needed()
         state = self.clients.get(client_id)
         if state is None:
             self.register_client(client_id, client_id)
@@ -379,6 +386,7 @@ class MeshtasticBroker:
 
     def observe_radio_bytes(self, data: bytes) -> list[ObservedRadioFrame]:
         self._expire_control_owner_if_needed()
+        self._expire_host_session_owner_if_needed()
         parsed = self.radio_parser.feed(data)
         observed: list[ObservedRadioFrame] = []
         if parsed.text_chunks:
@@ -426,10 +434,37 @@ class MeshtasticBroker:
 
     def _should_forward_frame(self, client_id: str, frame: bytes) -> bool:
         self._expire_control_owner_if_needed()
+        self._expire_host_session_owner_if_needed()
         try:
             message = decode_toradio_frame(frame)
         except Exception as exc:
             self.logger.debug("allowing undecodable frame from %s: %s", client_id, exc)
+            return True
+
+        variant = message.WhichOneof("payload_variant")
+        if variant == "want_config_id":
+            self._claim_host_session_owner(client_id)
+            self.logger.info("host session claimed by %s via want_config_id", self._client_label(client_id))
+            return True
+
+        if variant in {"heartbeat", "disconnect"}:
+            if self.host_session_owner_id is None:
+                self._claim_host_session_owner(client_id)
+                self.logger.info("host session claimed by %s via %s", self._client_label(client_id), variant)
+                return True
+            if self.host_session_owner_id != client_id:
+                self.logger.debug(
+                    "suppressing host-session %s from %s while owned by %s",
+                    variant,
+                    self._client_label(client_id),
+                    self._host_session_owner_label(),
+                )
+                return False
+            if variant == "disconnect":
+                self.logger.info("host session released by %s", self._client_label(client_id))
+                self._clear_host_session_owner()
+                return True
+            self._refresh_host_session_owner_lease()
             return True
 
         if not is_control_request(message):
@@ -462,9 +497,13 @@ class MeshtasticBroker:
 
     def snapshot(self) -> dict[str, object]:
         self._expire_control_owner_if_needed()
+        self._expire_host_session_owner_if_needed()
         expires_in = None
         if self.control_owner_expires_at is not None:
             expires_in = max(0.0, round(self.control_owner_expires_at - self.clock(), 3))
+        host_session_expires_in = None
+        if self.host_session_expires_at is not None:
+            host_session_expires_in = max(0.0, round(self.host_session_expires_at - self.clock(), 3))
         return {
             "client_count": len(self.clients),
             "control_owner": self._owner_label() if self.control_owner_id is not None else None,
@@ -473,12 +512,35 @@ class MeshtasticBroker:
             "denied_control_frames": self.denied_control_frames,
             "dropped_radio_bytes": self.dropped_radio_bytes,
             "forwarded_control_frames": self.forwarded_control_frames,
+            "host_session_owner": self._host_session_owner_label() if self.host_session_owner_id is not None else None,
+            "host_session_expires_in": host_session_expires_in,
             "ignored_serial_debug_bytes": self.ignored_serial_debug_bytes,
             "invalid_radio_frames": self.invalid_radio_frames,
             "observed_admin_responses": self.observed_admin_responses,
             "last_session_passkey": self.last_session_passkey or None,
             "last_admin_response_owner": self.last_admin_response_owner,
         }
+
+    def _claim_host_session_owner(self, client_id: str) -> None:
+        self.host_session_owner_id = client_id
+        self.host_session_expires_at = self.clock() + HOST_SESSION_LEASE_SECONDS
+
+    def _refresh_host_session_owner_lease(self) -> None:
+        if self.host_session_owner_id is None:
+            return
+        self.host_session_expires_at = self.clock() + HOST_SESSION_LEASE_SECONDS
+
+    def _clear_host_session_owner(self) -> None:
+        self.host_session_owner_id = None
+        self.host_session_expires_at = None
+
+    def _expire_host_session_owner_if_needed(self) -> None:
+        if self.host_session_owner_id is None or self.host_session_expires_at is None:
+            return
+        if self.clock() < self.host_session_expires_at:
+            return
+        self.logger.info("host session expired for %s", self._host_session_owner_label())
+        self._clear_host_session_owner()
 
     def _claim_control_owner(self, client_id: str) -> None:
         self.control_owner_id = client_id
@@ -512,3 +574,8 @@ class MeshtasticBroker:
         if self.control_owner_id is None:
             return "unknown client"
         return self._client_label(self.control_owner_id)
+
+    def _host_session_owner_label(self) -> str:
+        if self.host_session_owner_id is None:
+            return "unknown client"
+        return self._client_label(self.host_session_owner_id)
