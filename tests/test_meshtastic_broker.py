@@ -1295,9 +1295,9 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         self.assertEqual(int(reply.packet.to), 42)
         self.assertEqual(int(reply.packet.decoded.portnum), int(portnums_pb2.TEXT_MESSAGE_APP))
         self.assertIn("WO67 BBS", text)
-        self.assertIn("Status: online | users: 1", text)
+        self.assertIn("Status: online | users: 1 | topics: 0", text)
         self.assertIn("Caller: PEER", text)
-        self.assertIn("hello  show this page", text)
+        self.assertIn("Cmds: hello help list news put show sub unsub time topics who", text)
 
         record_path = pathlib.Path(self.temp_dir.name) / "data" / "bbs" / "users" / "42.json"
         wait_until(record_path.exists)
@@ -1322,10 +1322,75 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         text = reply.packet.decoded.payload.decode("utf-8")
 
         self.assertIn("WO67 BBS", text)
-        self.assertIn("Status: online | users: 1", text)
+        self.assertIn("Status: online | users: 1 | topics: 0", text)
 
         users_dir = pathlib.Path(self.temp_dir.name) / "data" / "bbs" / "users"
         self.assertEqual(sorted(path.name for path in users_dir.glob("*.json")), ["42.json"])
+
+    def test_bbs_mode_put_list_and_show_commands_persist_posts(self) -> None:
+        pathlib.Path(self.config_file).write_text("dm_mode=BBS\n", encoding="utf-8")
+        source_dir = REPO_ROOT / "plugins" / "DM_BBS"
+        target_dir = self.plugins_dir / "DM_BBS"
+        shutil.copytree(source_dir, target_dir)
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("WO67", from_node=777))
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=42))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"first contact", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"put general hello mesh", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 2)
+        put_reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[1])
+        put_text = put_reply.packet.decoded.payload.decode("utf-8")
+        self.assertIn("Posted #1 to general.", put_text)
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"list", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 3)
+        list_reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[2])
+        list_text = list_reply.packet.decoded.payload.decode("utf-8")
+        self.assertEqual(list_text, "Topics: general(1)")
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"show general", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 4)
+        show_reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[3])
+        show_text = show_reply.packet.decoded.payload.decode("utf-8")
+        self.assertIn("#1 general PEER: hello mesh", show_text)
+
+        post_path = pathlib.Path(self.temp_dir.name) / "data" / "bbs" / "posts" / "1.json"
+        wait_until(post_path.exists)
+        post = json.loads(post_path.read_text(encoding="utf-8"))
+        self.assertEqual(post["topic"], "general")
+        self.assertEqual(post["text"], "hello mesh")
+
+    def test_bbs_mode_sub_and_news_commands_filter_posts(self) -> None:
+        pathlib.Path(self.config_file).write_text("dm_mode=BBS\n", encoding="utf-8")
+        source_dir = REPO_ROOT / "plugins" / "DM_BBS"
+        target_dir = self.plugins_dir / "DM_BBS"
+        shutil.copytree(source_dir, target_dir)
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("WO67", from_node=777))
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=42))
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("ALFA", from_node=43))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"first contact", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"put general alpha update", from_node=43, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 2)
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"put alerts storm coming", from_node=43, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 3)
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"sub alerts", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 4)
+        sub_reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[3])
+        self.assertEqual(sub_reply.packet.decoded.payload.decode("utf-8"), "Subscribed: alerts")
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"news", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 5)
+        news_reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[4])
+        news_text = news_reply.packet.decoded.payload.decode("utf-8")
+        self.assertIn("News for alerts:", news_text)
+        self.assertIn("#1 alerts: storm coming", news_text)
+        self.assertNotIn("general", news_text)
 
     def test_direct_message_plugin_hot_reloads_under_dm_directory(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-reload.txt"
