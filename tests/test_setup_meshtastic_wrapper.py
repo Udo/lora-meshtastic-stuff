@@ -697,6 +697,34 @@ proxy_status
         self.assertIn("Proxy:   stopped\n", result.stdout)
         self.assertIn("  Manager: systemd-user\n", result.stdout)
 
+        def test_proxy_status_reports_radio_fault_counters(self) -> None:
+                result = run_wrapper_snippet(
+                        """
+proxy_is_ready() { return 0; }
+proxy_manager_label() { printf 'systemd-system\n'; }
+proxy_pid() { printf '123\n'; }
+read_proxy_status_field() {
+    case "$1" in
+        client_count) printf '2\n' ;;
+        serial_connected) printf 'true\n' ;;
+        denied_control_frames) printf '1\n' ;;
+        forwarded_control_frames) printf '5\n' ;;
+        observed_admin_responses) printf '4\n' ;;
+        control_session_confirmed) printf 'false\n' ;;
+        control_session_expires_in) printf '9.5\n' ;;
+        dropped_radio_bytes) printf '17\n' ;;
+        invalid_radio_frames) printf '3\n' ;;
+        *) return 1 ;;
+    esac
+}
+proxy_status
+"""
+                )
+
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                self.assertIn("  Dropped radio bytes: 17\n", result.stdout)
+                self.assertIn("  Invalid radio frames: 3\n", result.stdout)
+
     def test_have_systemctl_user_requires_user_bus_environment(self) -> None:
         result = run_wrapper_snippet(
             """

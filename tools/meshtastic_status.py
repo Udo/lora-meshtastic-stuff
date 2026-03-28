@@ -259,6 +259,14 @@ def render_summary(iface) -> None:
     kv("Proxy/broker", "running" if proxy_runtime["running"] else "stopped")
     kv("Proxy endpoint", endpoint_state)
     kv("Proxy connection", proxy_runtime["connection_status"])
+    proxy_snapshot = proxy_runtime.get("snapshot") if isinstance(proxy_runtime, dict) else {}
+    if isinstance(proxy_snapshot, dict):
+        dropped_radio_bytes = proxy_snapshot.get("dropped_radio_bytes")
+        invalid_radio_frames = proxy_snapshot.get("invalid_radio_frames")
+        if dropped_radio_bytes is not None:
+            kv("Dropped radio bytes", dropped_radio_bytes)
+        if invalid_radio_frames is not None:
+            kv("Invalid radio frames", invalid_radio_frames)
     if proxy_runtime["config_file_loaded"]:
         kv("Proxy config loaded", proxy_runtime["config_file"])
     elif proxy_runtime["persistent_config_file"]:

@@ -2131,7 +2131,7 @@ proxy_stop() {
 }
 
 proxy_status() {
-  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager
+  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes invalid_radio_frames
   json_output="${1:-}"
   manager="$(proxy_manager_label)"
 
@@ -2151,6 +2151,8 @@ proxy_status() {
     session_key="$(read_proxy_status_field last_session_passkey || true)"
     session_confirmed="$(read_proxy_status_field control_session_confirmed || true)"
     session_expires_in="$(read_proxy_status_field control_session_expires_in || true)"
+    dropped_radio_bytes="$(read_proxy_status_field dropped_radio_bytes || true)"
+    invalid_radio_frames="$(read_proxy_status_field invalid_radio_frames || true)"
     if [[ -n "${clients}" ]]; then
       printf '  Clients: %s\n' "${clients}"
     fi
@@ -2177,6 +2179,12 @@ proxy_status() {
     fi
     if [[ -n "${admin_responses}" ]]; then
       printf '  Admin responses: %s\n' "${admin_responses}"
+    fi
+    if [[ -n "${dropped_radio_bytes}" ]]; then
+      printf '  Dropped radio bytes: %s\n' "${dropped_radio_bytes}"
+    fi
+    if [[ -n "${invalid_radio_frames}" ]]; then
+      printf '  Invalid radio frames: %s\n' "${invalid_radio_frames}"
     fi
     if [[ -n "${admin_owner}" ]]; then
       printf '  Last admin owner: %s\n' "${admin_owner}"

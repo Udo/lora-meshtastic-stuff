@@ -224,6 +224,10 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
                     "connection_status": "connected",
                     "host": "127.0.0.1",
                     "tcp_port": 4403,
+                    "snapshot": {
+                        "dropped_radio_bytes": 17,
+                        "invalid_radio_frames": 3,
+                    },
                     "config_file_loaded": True,
                     "config_file": "/tmp/meshtastic/service.env",
                     "persistent_config_file": "/tmp/meshtastic/service.env",
@@ -245,6 +249,10 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         self.assertIn("127.0.0.1:4403 reachable", rendered)
         self.assertIn("Proxy connection", rendered)
         self.assertIn("connected", rendered)
+        self.assertIn("Dropped radio bytes", rendered)
+        self.assertIn("17", rendered)
+        self.assertIn("Invalid radio frames", rendered)
+        self.assertIn("3", rendered)
         self.assertIn("Proxy config loaded", rendered)
         self.assertIn("/tmp/meshtastic/service.env", rendered)
 
@@ -284,6 +292,7 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
                 "connection_status": "stopped",
                 "host": "127.0.0.1",
                 "tcp_port": 4403,
+                "snapshot": {},
                 "config_file_loaded": False,
                 "config_file": None,
                 "persistent_config_file": None,
