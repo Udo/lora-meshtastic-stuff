@@ -1196,6 +1196,22 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["word:hello"])
 
+    def test_direct_message_first_word_handler_lookup_is_case_insensitive(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-routing-case.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "hello.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('word:' + str(event.get('dm_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"HeLLo there", from_node=42, to_node=777))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding='utf-8').splitlines(), ["word:hello"])
+
     def test_direct_message_handler_first_runs_before_specific_handler(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-handler-first.txt"
         dm_dir = self.plugins_dir / "DM"
@@ -1416,6 +1432,24 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
         self.fake_serial.inject_read(make_fromradio_admin_channel_response_frame("Friends", channel_num=2, index=1))
         self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"@UDO1 ping now", from_node=55, channel_num=2))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["Friends:ping"])
+
+    def test_channel_command_handler_lookup_is_case_insensitive(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-routing-case.txt"
+        chan_dir = self.plugins_dir / "CHAN_Friends"
+        chan_dir.mkdir()
+        (chan_dir / "ping.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(str(event.get('channel_name')) + ':' + str(event.get('channel_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(make_fromradio_admin_channel_response_frame("Friends", channel_num=2, index=1))
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"@UDO1 PiNg now", from_node=55, channel_num=2))
         wait_until(lambda: output_file.exists())
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["Friends:ping"])

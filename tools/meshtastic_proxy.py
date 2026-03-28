@@ -886,7 +886,7 @@ class MeshtasticProxy:
         first_word = text.split(maxsplit=1)[0]
         if not first_word or "/" in first_word or "\\" in first_word:
             return None
-        return first_word
+        return first_word.lower()
 
     def _is_direct_message_event(self, event: dict[str, object]) -> bool:
         if event.get("event_type") != "packet":
@@ -938,7 +938,7 @@ class MeshtasticProxy:
         command = remainder.split(maxsplit=1)[0]
         if not command or "/" in command or "\\" in command:
             return True, None
-        return True, command
+        return True, command.lower()
 
     def _dispatch_channel_plugins(self, event: dict[str, object], api: dict[str, object]) -> bool:
         if event.get("event_type") != "packet" or event.get("portnum_name") != "TEXT_MESSAGE_APP":
