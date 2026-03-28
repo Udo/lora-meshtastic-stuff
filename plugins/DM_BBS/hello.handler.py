@@ -57,24 +57,7 @@ def _upsert_user(event, api) -> None:
 
 
 def _banner_text(event, api) -> str:
-    bbs_dir = _bbs_dir(api)
-    user_count = len(list((bbs_dir / "users").glob("*.json"))) if (bbs_dir / "users").exists() else 0
-    return "\n".join(
-        [
-            r" __  __           _    ____  ____  ____ ",
-            r"|  \/  | ___  ___| |__| __ )| __ )/ ___|",
-            r"| |\/| |/ _ \/ __| '_ \  _ \|  _ \\___ \\",
-            r"| |  | |  __/\__ \ | | | |_) | |_) |__) |",
-            r"|_|  |_|\___||___/_| |_|____/|____/____/ ",
-            f"Status: online | users: {user_count}",
-            #f"Caller: {_sender_label(event)}",
-            "-------------------------------------",
-            "Commands:",
-            "hello | show this page",
-            "-------------------------------------",
-            "This BBS is under development. Please check back later for more features!",
-        ]
-    )
+    return "Hi from MeshBBS"
 
 
 def handle_packet(event, api):
