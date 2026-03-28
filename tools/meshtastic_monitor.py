@@ -259,6 +259,7 @@ class Monitor:
         self.include_filters = parse_filters(args.only)
         self.exclude_filters = parse_filters(args.exclude)
         self.log_handle = None
+        self.node_update_fingerprints: dict[str, str] = {}
 
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
@@ -275,11 +276,30 @@ class Monitor:
             return False
         if topic_name == "meshtastic.log.line" and not self.args.include_log_lines:
             return False
+        if topic_name == "meshtastic.node.updated" and self.is_duplicate_node_update(kwargs):
+            return False
         if not filter_matches(self.include_filters, topic_name, kwargs):
             return False
         if self.exclude_filters and filter_matches(self.exclude_filters, topic_name, kwargs):
             return False
         return True
+
+    def is_duplicate_node_update(self, kwargs: dict) -> bool:
+        node = kwargs.get("node")
+        if not isinstance(node, dict):
+            return False
+
+        normalized = strip_raw(node)
+        user = normalized.get("user", {}) if isinstance(normalized.get("user"), dict) else {}
+        node_key = str(
+            user.get("id")
+            or normalized.get("num")
+            or json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        )
+        fingerprint = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        previous = self.node_update_fingerprints.get(node_key)
+        self.node_update_fingerprints[node_key] = fingerprint
+        return previous == fingerprint
 
     def write_log_line(self, line: str) -> None:
         if self.log_handle is not None:

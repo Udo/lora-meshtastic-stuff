@@ -17,6 +17,38 @@ import meshtastic_monitor as monitor
 
 
 class MeshtasticMonitorTests(unittest.TestCase):
+    def test_should_emit_suppresses_duplicate_node_updates(self) -> None:
+        args = monitor.build_parser().parse_args([])
+        mon = monitor.Monitor(args)
+        kwargs = {
+            "node": {
+                "num": 456,
+                "user": {"id": "!peer", "longName": "Peer Node", "shortName": "PEER"},
+            }
+        }
+
+        self.assertTrue(mon.should_emit("meshtastic.node.updated", kwargs))
+        self.assertFalse(mon.should_emit("meshtastic.node.updated", kwargs))
+
+    def test_should_emit_allows_changed_node_updates(self) -> None:
+        args = monitor.build_parser().parse_args([])
+        mon = monitor.Monitor(args)
+        first = {
+            "node": {
+                "num": 456,
+                "user": {"id": "!peer", "longName": "Peer Node", "shortName": "PEER"},
+            }
+        }
+        second = {
+            "node": {
+                "num": 456,
+                "user": {"id": "!peer", "longName": "Peer Node Renamed", "shortName": "PEER"},
+            }
+        }
+
+        self.assertTrue(mon.should_emit("meshtastic.node.updated", first))
+        self.assertTrue(mon.should_emit("meshtastic.node.updated", second))
+
     def test_run_reports_connection_timeout_without_traceback(self) -> None:
         args = monitor.build_parser().parse_args([
             "--host",
