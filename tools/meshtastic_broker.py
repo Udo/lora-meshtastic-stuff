@@ -1,5 +1,6 @@
 import logging
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 
@@ -450,12 +451,21 @@ class MeshtasticBroker:
 
         variant = message.WhichOneof("payload_variant")
         if variant == "want_config_id":
-            self._claim_host_session_owner(client_id)
-            self.logger.info("host session claimed by %s via want_config_id", self._client_label(client_id))
-            return ForwardDecision("forward")
+            if self._should_claim_host_session_owner(client_id):
+                self._claim_host_session_owner(client_id)
+                self.logger.info("host session claimed by %s via want_config_id", self._client_label(client_id))
+                return ForwardDecision("forward")
+            self.logger.debug(
+                "suppressing host-session want_config_id from %s while owned by %s",
+                self._client_label(client_id),
+                self._host_session_owner_label(),
+            )
+            return ForwardDecision("consume")
 
         if variant in {"heartbeat", "disconnect"}:
-            if self.host_session_owner_id is None:
+            if self.host_session_owner_id is None or (
+                variant == "heartbeat" and self._should_claim_host_session_owner(client_id)
+            ):
                 self._claim_host_session_owner(client_id)
                 self.logger.info("host session claimed by %s via %s", self._client_label(client_id), variant)
                 return ForwardDecision("forward")
@@ -532,6 +542,17 @@ class MeshtasticBroker:
         self.host_session_owner_id = client_id
         self.host_session_expires_at = self.clock() + HOST_SESSION_LEASE_SECONDS
 
+    def _should_claim_host_session_owner(self, client_id: str) -> bool:
+        if self.host_session_owner_id is None or self.host_session_owner_id == client_id:
+            return True
+        current_is_loopback = self._is_loopback_client(self.host_session_owner_id)
+        candidate_is_loopback = self._is_loopback_client(client_id)
+        if current_is_loopback and not candidate_is_loopback:
+            return True
+        if not current_is_loopback and candidate_is_loopback:
+            return False
+        return True
+
     def _refresh_host_session_owner_lease(self) -> None:
         if self.host_session_owner_id is None:
             return
@@ -576,6 +597,17 @@ class MeshtasticBroker:
     def _client_label(self, client_id: str) -> str:
         state = self.clients.get(client_id)
         return state.label if state is not None else client_id
+
+    def _is_loopback_client(self, client_id: str) -> bool:
+        label = self._client_label(client_id)
+        host = label.rsplit(":", 1)[0] if ":" in label else label
+        host = host.strip("[]")
+        if host in {"127.0.0.1", "::1", "localhost"}:
+            return True
+        try:
+            return socket.gethostbyname(host) == "127.0.0.1"
+        except OSError:
+            return False
 
     def _owner_label(self) -> str:
         if self.control_owner_id is None:
