@@ -422,6 +422,37 @@ class FrameParserTests(unittest.TestCase):
         self.assertEqual(second.raw_chunks, [])
         self.assertEqual(second.frames, [frame])
 
+    def test_radio_parser_treats_blank_lines_after_console_text_as_text_chunks(self) -> None:
+        parser = FrameParser(strip_text_prefix=True)
+        noise = b"DEBUG | SerialConsole line\n\n"
+        frame = make_fromradio_text_frame(b"ok")
+
+        result = parser.feed(noise + frame)
+
+        self.assertEqual(result.text_chunks, [b"DEBUG | SerialConsole line\n", b"\n"])
+        self.assertEqual(result.raw_chunks, [])
+        self.assertEqual(result.frames, [frame])
+
+    def test_radio_parser_treats_ansi_control_fragments_as_text_chunks(self) -> None:
+        parser = FrameParser(strip_text_prefix=True)
+        frame = make_fromradio_text_frame(b"ok")
+
+        result = parser.feed(b"\x1b[0m\x1b" + frame)
+
+        self.assertEqual(result.text_chunks, [b"\x1b[0m\x1b"])
+        self.assertEqual(result.raw_chunks, [])
+        self.assertEqual(result.frames, [frame])
+
+    def test_radio_parser_treats_ansi_prefixed_debug_shards_as_text_chunks(self) -> None:
+        parser = FrameParser(strip_text_prefix=True)
+        frame = make_fromradio_text_frame(b"ok")
+
+        result = parser.feed(b"\x1b[0m\x1b[34mD" + frame)
+
+        self.assertEqual(result.text_chunks, [b"\x1b[0m\x1b[34mD"])
+        self.assertEqual(result.raw_chunks, [])
+        self.assertEqual(result.frames, [frame])
+
 
 class MeshtasticBrokerTests(unittest.TestCase):
     def setUp(self) -> None:

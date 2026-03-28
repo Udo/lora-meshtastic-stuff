@@ -13,6 +13,7 @@ DEFAULT_TCP_HOST = "127.0.0.1"
 DEFAULT_TCP_PORT = 4403
 PROXY_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "proxy-status.json"
 SERVICE_CONFIG_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "service.env"
+WILDCARD_TCP_HOSTS = {"", "0.0.0.0", "::", "[::]", "*"}
 
 
 def host_os() -> str:
@@ -99,6 +100,13 @@ def style(palette: Palette, color: str, text: str) -> str:
     return f"{color}{text}{palette.reset}"
 
 
+def normalize_tcp_client_host(host: object) -> str:
+    raw_host = str(host or "").strip()
+    if raw_host in WILDCARD_TCP_HOSTS:
+        return DEFAULT_TCP_HOST
+    return raw_host
+
+
 def strip_raw(obj):
     if isinstance(obj, dict):
         return {key: strip_raw(value) for key, value in obj.items() if key != "raw"}
@@ -154,7 +162,8 @@ def connect_interface_for_target(
             from meshtastic.tcp_interface import TCPInterface
 
             tcp_factory = TCPInterface
-        interface = prepare_interface(tcp_factory(target.host, portNumber=target.tcp_port, connectNow=False))
+        tcp_host = normalize_tcp_client_host(target.host)
+        interface = prepare_interface(tcp_factory(tcp_host, portNumber=target.tcp_port, connectNow=False))
         if getattr(interface, "socket", None) is None and hasattr(interface, "myConnect"):
             interface.myConnect()
         if tcp_connect_now:
@@ -212,7 +221,7 @@ def env_host_override() -> str:
 
 
 def env_proxy_host() -> str:
-    return os.environ.get("MESHTASTIC_PROXY_HOST", DEFAULT_TCP_HOST)
+    return normalize_tcp_client_host(os.environ.get("MESHTASTIC_PROXY_HOST", DEFAULT_TCP_HOST))
 
 
 def load_proxy_status(status_file: Path = PROXY_STATUS_FILE) -> dict[str, object]:
@@ -260,7 +269,7 @@ def summarize_proxy_runtime(
     service_config_file = service_config_file or SERVICE_CONFIG_FILE
     snapshot = load_proxy_status(status_file)
 
-    host = str(snapshot.get("listen_host") or env_proxy_host())
+    host = normalize_tcp_client_host(env_proxy_host() or snapshot.get("listen_host"))
     listen_port = snapshot.get("listen_port")
     tcp_port = listen_port if isinstance(listen_port, int) else env_tcp_port()
     reachable = tcp_endpoint_ready(host, tcp_port)
@@ -300,7 +309,7 @@ def summarize_proxy_runtime(
 def detect_proxy_target(status_file: Path | None = None) -> MeshtasticTarget | None:
     status_file = status_file or PROXY_STATUS_FILE
     status = load_proxy_status(status_file)
-    host = str(status.get("listen_host") or env_proxy_host())
+    host = normalize_tcp_client_host(env_proxy_host() or status.get("listen_host"))
     port = status.get("listen_port")
     if isinstance(port, int):
         tcp_port = port
@@ -321,7 +330,7 @@ def _resolve_meshtastic_target_with_details(
     status_file = status_file or PROXY_STATUS_FILE
     serial_port = port or env_serial_port()
     resolved_tcp_port = tcp_port if tcp_port is not None else env_tcp_port()
-    explicit_host = host or env_host_override()
+    explicit_host = normalize_tcp_client_host(host or env_host_override())
     details: dict[str, object] = {
         "requested": {
             "port": port,
@@ -356,7 +365,7 @@ def _resolve_meshtastic_target_with_details(
     if status:
         details["proxy_snapshot"] = status
 
-    proxy_host = str(status.get("listen_host") or env_proxy_host())
+    proxy_host = normalize_tcp_client_host(env_proxy_host() or status.get("listen_host"))
     listen_port = status.get("listen_port")
     proxy_port = listen_port if isinstance(listen_port, int) else resolved_tcp_port
     proxy_reachable = tcp_endpoint_ready(proxy_host, proxy_port)

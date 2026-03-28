@@ -228,10 +228,21 @@ class ProtocolLogger:
         self.stop_requested = True
         interface = self.interface
         if interface is not None:
-            try:
-                interface.close()
-            except Exception:
-                pass
+            tcp_socket = getattr(interface, "socket", None)
+            if tcp_socket is not None:
+                try:
+                    tcp_socket.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    tcp_socket.close()
+                except Exception:
+                    pass
+            else:
+                try:
+                    interface.close()
+                except Exception:
+                    pass
 
     def wait_for_tcp_target(self) -> bool:
         wait_seconds = max(float(self.args.connect_wait_seconds), 0.0)
@@ -300,7 +311,10 @@ class ProtocolLogger:
         finally:
             pub.unsubscribe(self.on_event, pub.ALL_TOPICS)
             if self.interface is not None:
-                self.interface.close()
+                try:
+                    self.interface.close()
+                except Exception:
+                    pass
         return 0
 
 

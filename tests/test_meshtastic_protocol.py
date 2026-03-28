@@ -125,6 +125,31 @@ class MeshtasticProtocolTests(unittest.TestCase):
         self.assertTrue(logger.stop_requested)
         self.assertTrue(closed["value"])
 
+    def test_request_stop_closes_tcp_socket_without_calling_interface_close(self) -> None:
+        args = protocol.build_parser().parse_args(["protocol"])
+        logger = protocol.ProtocolLogger(args)
+        events: list[str] = []
+
+        class FakeSocket:
+            def shutdown(self, _how):
+                events.append("shutdown")
+
+            def close(self):
+                events.append("socket-close")
+
+        class FakeTcpInterface:
+            def __init__(self):
+                self.socket = FakeSocket()
+
+            def close(self):
+                events.append("interface-close")
+
+        logger.interface = FakeTcpInterface()
+        logger.request_stop()
+
+        self.assertTrue(logger.stop_requested)
+        self.assertEqual(events, ["shutdown", "socket-close"])
+
 
 if __name__ == "__main__":
     unittest.main()

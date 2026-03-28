@@ -19,6 +19,11 @@ HOST="${MESHTASTIC_HOST:-}"
 TCP_PORT="${MESHTASTIC_TCP_PORT:-4403}"
 PROXY_BIND_HOST="${MESHTASTIC_PROXY_BIND_HOST:-127.0.0.1}"
 PROXY_CONNECT_HOST="${MESHTASTIC_PROXY_HOST:-127.0.0.1}"
+case "${PROXY_CONNECT_HOST}" in
+  ''|0.0.0.0|::|'[::]'|'*')
+    PROXY_CONNECT_HOST='127.0.0.1'
+    ;;
+esac
 LOG_SECONDS="${MESHTASTIC_LOG_SECONDS:-20}"
 DEFAULT_REGION="${MESHTASTIC_REGION:-EU_868}"
 WIFI_SSID="${MESHTASTIC_WIFI_SSID:-}"
@@ -32,6 +37,7 @@ STATUS_TOOL="${ROOT_DIR}/tools/meshtastic_status.py"
 MONITOR_TOOL="${ROOT_DIR}/tools/meshtastic_monitor.py"
 MESSAGES_TOOL="${ROOT_DIR}/tools/meshtastic_messages.py"
 PROTOCOL_TOOL="${ROOT_DIR}/tools/meshtastic_protocol.py"
+RUNTIME_MANAGER_TOOL="${ROOT_DIR}/tools/meshtastic_runtime_manager.py"
 PLUGINS_TOOL="${ROOT_DIR}/tools/meshtastic_plugins.py"
 PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
@@ -492,9 +498,33 @@ MESHTASTIC_PROTOCOL_LOG_NAME=$(printf '%q' "${PROTOCOL_LOG_NAME}")
 EOF
 }
 
+migrate_service_config_connect_host() {
+  [[ -f "${SERVICE_CONFIG_FILE}" ]] || return 1
+
+  local configured_host temp_file
+  configured_host="$(sed -n 's/^MESHTASTIC_PROXY_HOST=//p' "${SERVICE_CONFIG_FILE}" | head -n1)"
+  case "${configured_host}" in
+    0.0.0.0|::|'[::]'|'*')
+      temp_file="$(mktemp)"
+      if grep -q '^MESHTASTIC_PROXY_HOST=' "${SERVICE_CONFIG_FILE}"; then
+        sed "s|^MESHTASTIC_PROXY_HOST=.*$|MESHTASTIC_PROXY_HOST=$(printf '%q' "${PROXY_CONNECT_HOST}")|" "${SERVICE_CONFIG_FILE}" > "${temp_file}"
+      else
+        cat "${SERVICE_CONFIG_FILE}" > "${temp_file}"
+        printf 'MESHTASTIC_PROXY_HOST=%q\n' "${PROXY_CONNECT_HOST}" >> "${temp_file}"
+      fi
+      mv "${temp_file}" "${SERVICE_CONFIG_FILE}"
+      print_warn "Updated ${SERVICE_CONFIG_FILE} to use MESHTASTIC_PROXY_HOST=${PROXY_CONNECT_HOST} for local client connections."
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 ensure_service_config() {
   ensure_runtime_dir
   if [[ -f "${SERVICE_CONFIG_FILE}" ]]; then
+    migrate_service_config_connect_host || true
     return 1
   fi
   write_service_config
@@ -859,41 +889,11 @@ proxy_service_stop() {
 }
 
 protocol_service_start() {
-  local manager
-  manager="$(proxy_installed_manager_label)"
-
-  case "${manager}" in
-    systemd-system)
-      require_systemd_system
-      run_with_sudo systemctl start "${PROTOCOL_SYSTEMD_UNIT}"
-      ;;
-    systemd-user)
-      require_systemd_user
-      systemctl --user start "${PROTOCOL_SYSTEMD_UNIT}"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  return 0
 }
 
 protocol_service_stop() {
-  local manager
-  manager="$(proxy_manager_label)"
-
-  case "${manager}" in
-    systemd-system)
-      require_systemd_system
-      run_with_sudo systemctl stop "${PROTOCOL_SYSTEMD_UNIT}"
-      ;;
-    systemd-user)
-      require_systemd_user
-      systemctl --user stop "${PROTOCOL_SYSTEMD_UNIT}"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  return 0
 }
 
 proxy_service_log() {
@@ -933,7 +933,6 @@ Group=${service_group}"
 [Unit]
 Description=Meshtastic serial-to-TCP proxy and broker
 After=default.target local-fs.target
-Wants=${PROTOCOL_SYSTEMD_UNIT}
 ${extra_unit_lines}
 
 [Service]
@@ -941,7 +940,7 @@ Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
 EnvironmentFile=${SERVICE_CONFIG_FILE}
-ExecStart=${VENV_PYTHON} ${PROXY_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE} --config-file ${SERVICE_CONFIG_FILE}
+ExecStart=${VENV_PYTHON} ${RUNTIME_MANAGER_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --connect-host \${MESHTASTIC_PROXY_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE} --config-file ${SERVICE_CONFIG_FILE} --protocol-log-name \${MESHTASTIC_PROTOCOL_LOG_NAME}
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -981,7 +980,7 @@ Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
 EnvironmentFile=${SERVICE_CONFIG_FILE}
-ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host \${MESHTASTIC_PROXY_HOST} --tcp-port \${MESHTASTIC_TCP_PORT} \${MESHTASTIC_PROTOCOL_LOG_NAME} --quiet
+ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host \${MESHTASTIC_PROXY_HOST} --tcp-port \${MESHTASTIC_TCP_PORT} --connect-wait-seconds 20 \${MESHTASTIC_PROTOCOL_LOG_NAME} --quiet
 Restart=on-failure
 RestartSec=2
 TimeoutStartSec=20
@@ -1014,6 +1013,18 @@ protocol_write_user_systemd_unit() {
 protocol_write_system_systemd_unit() {
   run_with_sudo mkdir -p "${PROXY_SYSTEMD_SYSTEM_DIR}"
   protocol_unit_content system | run_with_sudo tee "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}" >/dev/null
+}
+
+remove_legacy_protocol_units_user() {
+  systemctl --user disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+  systemctl --user reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+  rm -f "${PROTOCOL_SYSTEMD_USER_UNIT_FILE}"
+}
+
+remove_legacy_protocol_units_system() {
+  run_with_sudo systemctl disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+  run_with_sudo systemctl reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+  run_with_sudo rm -f "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}" >/dev/null 2>&1 || true
 }
 
 proxy_linger_status() {
@@ -1053,7 +1064,7 @@ proxy_autostart_install_user() {
   fi
 
   proxy_write_user_systemd_unit
-  protocol_write_user_systemd_unit
+  remove_legacy_protocol_units_user
   systemctl --user daemon-reload
   if [[ "${had_user_service}" == 'yes' ]]; then
     systemctl --user enable "${PROXY_SYSTEMD_UNIT}"
@@ -1108,7 +1119,7 @@ proxy_autostart_install_system() {
   fi
 
   proxy_write_system_systemd_unit
-  protocol_write_system_systemd_unit
+  remove_legacy_protocol_units_system
   run_with_sudo systemctl daemon-reload
   if [[ "${had_system_service}" == 'yes' ]]; then
     run_with_sudo systemctl enable "${PROXY_SYSTEMD_UNIT}"
@@ -1137,12 +1148,10 @@ proxy_autostart_remove_user() {
   if proxy_user_service_installed || proxy_user_service_enabled || proxy_user_service_active; then
     systemctl --user disable --now "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
     systemctl --user reset-failed "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
-    systemctl --user disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
-    systemctl --user reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
   fi
 
+  remove_legacy_protocol_units_user
   rm -f "${PROXY_SYSTEMD_USER_UNIT_FILE}"
-  rm -f "${PROTOCOL_SYSTEMD_USER_UNIT_FILE}"
   systemctl --user daemon-reload
   rm -f "${PROXY_PID_FILE}"
   rm -f "${PROTOCOL_PID_FILE}"
@@ -1155,13 +1164,11 @@ proxy_autostart_remove_system() {
   if proxy_system_service_installed || proxy_system_service_enabled || proxy_system_service_active; then
     run_with_sudo systemctl disable --now "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
     run_with_sudo systemctl reset-failed "${PROXY_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
-    run_with_sudo systemctl disable --now "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
-    run_with_sudo systemctl reset-failed "${PROTOCOL_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
   fi
 
+  remove_legacy_protocol_units_system
   if proxy_system_service_installed; then
     run_with_sudo rm -f "${PROXY_SYSTEMD_SYSTEM_UNIT_FILE}"
-    run_with_sudo rm -f "${PROTOCOL_SYSTEMD_SYSTEM_UNIT_FILE}"
   fi
   run_with_sudo systemctl daemon-reload
   rm -f "${PROXY_PID_FILE}"
@@ -2012,7 +2019,6 @@ proxy_start() {
   if proxy_service_installed; then
     service_manager="$(proxy_installed_manager_label)"
     proxy_service_start
-    protocol_service_start || true
 
     for _ in $(seq 1 20); do
       if proxy_is_ready; then
@@ -2028,26 +2034,24 @@ proxy_start() {
 
   if proxy_is_running; then
     print_warn "Proxy already running (pid $(proxy_pid))."
-    if ! protocol_manual_is_running; then
-      protocol_start_manual
-    fi
     return 0
   fi
 
   check_port
-  nohup "${VENV_PYTHON}" "${PROXY_TOOL}" \
+  nohup "${VENV_PYTHON}" "${RUNTIME_MANAGER_TOOL}" \
     --serial-port "${PORT}" \
     --baud "${BAUD}" \
     --listen-host "${PROXY_BIND_HOST}" \
+    --connect-host "${PROXY_CONNECT_HOST}" \
     --listen-port "${TCP_PORT}" \
     --status-file "${PROXY_STATUS_FILE}" \
     --config-file "${SERVICE_CONFIG_FILE}" \
+    --protocol-log-name "${PROTOCOL_LOG_NAME}" \
     >>"${PROXY_LOG_FILE}" 2>&1 &
   echo "$!" > "${PROXY_PID_FILE}"
 
   for _ in $(seq 1 20); do
     if proxy_is_ready; then
-      protocol_start_manual
       print_success "Proxy started on ${PROXY_BIND_HOST}:${TCP_PORT} for ${PORT} (pid $(proxy_pid))."
       return 0
     fi

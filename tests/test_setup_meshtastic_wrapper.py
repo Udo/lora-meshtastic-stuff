@@ -386,29 +386,29 @@ channels set-url $'https://meshtastic.org/e/#ABC\r\nDEF GHI'
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "cli:--ch-set-url https://meshtastic.org/e/#ABCDEFGHI\n")
 
-    def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
+    def test_proxy_start_manual_uses_runtime_manager(self) -> None:
         result = run_wrapper_snippet(
             """
 check_proxy_tool() { :; }
 ensure_python_packages() { :; }
-ensure_runtime_dir() { :; }
+ensure_runtime_dir() { mkdir -p "$RUNTIME_DIR"; }
 proxy_service_installed() { return 1; }
 proxy_is_running() { return 1; }
 check_port() { :; }
 seq() { printf '1\n'; }
-nohup() { return 0; }
+nohup() { printf '%s\n' "$*"; return 0; }
 sleep() { :; }
 proxy_is_ready() { return 0; }
 proxy_pid() { printf '123\n'; }
-protocol_start_manual() { printf 'protocol-started\n'; }
 proxy_start
+cat "$PROXY_LOG_FILE"
 """
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("protocol-started\n", result.stdout)
+        self.assertIn(f"nohup:{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_runtime_manager.py --serial-port", result.stdout)
 
-    def test_proxy_unit_wants_protocol_service(self) -> None:
+    def test_proxy_unit_uses_runtime_manager_without_protocol_unit_dependency(self) -> None:
         result = run_wrapper_snippet(
             """
 proxy_unit_content user
@@ -416,18 +416,8 @@ proxy_unit_content user
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("Wants=meshtastic-protocol.service", result.stdout)
-
-    def test_protocol_unit_is_bound_to_proxy_service(self) -> None:
-        result = run_wrapper_snippet(
-            """
-protocol_unit_content user
-"""
-        )
-
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("Requires=meshtastic-proxy.service", result.stdout)
-        self.assertIn("PartOf=meshtastic-proxy.service", result.stdout)
+        self.assertNotIn("Wants=meshtastic-protocol.service", result.stdout)
+        self.assertIn(f"{REPO_ROOT}/tools/meshtastic_runtime_manager.py", result.stdout)
 
     def test_main_dispatches_telemetry(self) -> None:
         result = run_wrapper_snippet(
@@ -523,7 +513,7 @@ proxy_system_service_enabled() { return 1; }
 proxy_system_service_active() { return 0; }
 proxy_manual_is_running() { return 1; }
 proxy_write_system_systemd_unit() { :; }
-protocol_write_system_systemd_unit() { :; }
+remove_legacy_protocol_units_system() { printf 'legacy-system-removed\n'; }
 proxy_system_service_active() { return 0; }
 run_with_sudo() { printf 'sudo:%s\\n' "$*"; }
 tcp_endpoint_ready() { return 0; }
@@ -532,6 +522,7 @@ proxy_autostart_install_system
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("legacy-system-removed\n", result.stdout)
         self.assertIn("sudo:systemctl daemon-reload\n", result.stdout)
         self.assertIn("sudo:systemctl enable meshtastic-proxy.service\n", result.stdout)
         self.assertIn("sudo:systemctl restart meshtastic-proxy.service\n", result.stdout)
@@ -554,7 +545,7 @@ proxy_user_service_enabled() { return 1; }
 proxy_user_service_active() { return 0; }
 proxy_manual_is_running() { return 1; }
 proxy_write_user_systemd_unit() { :; }
-protocol_write_user_systemd_unit() { :; }
+remove_legacy_protocol_units_user() { printf 'legacy-user-removed\n'; }
 systemctl() { printf 'user:%s\\n' "$*"; }
 tcp_endpoint_ready() { return 0; }
 proxy_linger_status() { printf 'yes\\n'; }
@@ -563,6 +554,7 @@ proxy_autostart_install_user
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("legacy-user-removed\n", result.stdout)
         self.assertIn("user:--user daemon-reload\n", result.stdout)
         self.assertIn("user:--user enable meshtastic-proxy.service\n", result.stdout)
         self.assertIn("user:--user restart meshtastic-proxy.service\n", result.stdout)
@@ -580,18 +572,31 @@ proxy_autostart_install_user
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn(f"EnvironmentFile={REPO_ROOT}/.runtime/meshtastic/service.env\n", result.stdout)
-        self.assertIn(r"ExecStart=" + f"{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_proxy.py --serial-port ${{MESHTASTIC_PORT}}", result.stdout)
+        self.assertIn(r"ExecStart=" + f"{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_runtime_manager.py --serial-port ${{MESHTASTIC_PORT}}", result.stdout)
+        self.assertIn(r"--listen-host ${MESHTASTIC_PROXY_BIND_HOST}", result.stdout)
+        self.assertIn(r"--connect-host ${MESHTASTIC_PROXY_HOST}", result.stdout)
 
-    def test_protocol_unit_content_uses_environment_file_and_variable_expansion(self) -> None:
-        result = run_wrapper_snippet("protocol_unit_content user")
+    def test_ensure_service_config_rewrites_wildcard_proxy_host_for_local_clients(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+RUNTIME_DIR="$tmpdir/runtime"
+SERVICE_CONFIG_FILE="$RUNTIME_DIR/service.env"
+mkdir -p "$RUNTIME_DIR"
+cat > "$SERVICE_CONFIG_FILE" <<'EOF'
+MESHTASTIC_PROXY_BIND_HOST=0.0.0.0
+MESHTASTIC_PROXY_HOST=0.0.0.0
+EOF
+PROXY_CONNECT_HOST=127.0.0.1
+ensure_service_config || true
+cat "$SERVICE_CONFIG_FILE"
+"""
+        )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn(f"EnvironmentFile={REPO_ROOT}/.runtime/meshtastic/service.env\n", result.stdout)
-        self.assertIn(r"${MESHTASTIC_PROXY_HOST}", result.stdout)
-        self.assertIn(r"${MESHTASTIC_PROTOCOL_LOG_NAME}", result.stdout)
-        self.assertIn("Restart=on-failure\n", result.stdout)
-        self.assertIn("TimeoutStartSec=20\n", result.stdout)
-        self.assertIn("TimeoutStopSec=5\n", result.stdout)
+        self.assertIn("MESHTASTIC_PROXY_BIND_HOST=0.0.0.0\n", result.stdout)
+        self.assertIn("MESHTASTIC_PROXY_HOST=127.0.0.1\n", result.stdout)
 
     def test_proxy_service_start_uses_system_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(

@@ -12,6 +12,7 @@ PROVISIONAL_CONTROL_LEASE_SECONDS = 10.0
 ADMIN_SESSION_LEASE_SECONDS = 300.0
 MALFORMED_RADIO_LOG_INTERVAL_SECONDS = 5.0
 ANSI_ESCAPE_RE = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
+ANSI_CONTROL_FRAGMENT_RE = re.compile(rb"^(?:\x1b(?:\[[0-9;?]*[ -/]*[@-~]?)?)+$")
 
 
 def strip_ansi_escape_sequences(data: bytes) -> bytes:
@@ -37,6 +38,21 @@ def raw_chunk_sample_text(data: bytes) -> str:
     return " ".join(sample.split())
 
 
+def is_whitespace_only_chunk(data: bytes) -> bool:
+    stripped = strip_ansi_escape_sequences(data)
+    return bool(stripped) and all(byte in b"\r\n\t " for byte in stripped)
+
+
+def is_ansi_control_fragment(data: bytes) -> bool:
+    if not data or not data.startswith(b"\x1b"):
+        return False
+    if all(byte == 0x1B or byte in b"\r\n\t" or 32 <= byte <= 126 for byte in data):
+        return True
+    if not strip_ansi_escape_sequences(data):
+        return True
+    return bool(ANSI_CONTROL_FRAGMENT_RE.fullmatch(data))
+
+
 @dataclass
 class ParseResult:
     text_chunks: list[bytes] = field(default_factory=list)
@@ -60,18 +76,18 @@ class FrameParser:
         if next_line_end != -1 and (next_start == -1 or next_line_end < next_start):
             end = next_line_end + 1
             candidate = bytes(buf[pos:end])
-            if looks_like_text_console_noise(candidate):
+            if is_whitespace_only_chunk(candidate) or is_ansi_control_fragment(candidate) or looks_like_text_console_noise(candidate):
                 return candidate, end, False
             return None, pos, False
 
         if next_start != -1 and next_start > pos:
             candidate = bytes(buf[pos:next_start])
-            if looks_like_text_console_noise(candidate):
+            if is_whitespace_only_chunk(candidate) or is_ansi_control_fragment(candidate) or looks_like_text_console_noise(candidate):
                 return candidate, next_start, False
             return None, pos, False
 
         candidate = bytes(buf[pos:])
-        if looks_like_text_console_noise(candidate):
+        if is_whitespace_only_chunk(candidate) or is_ansi_control_fragment(candidate) or looks_like_text_console_noise(candidate):
             return None, pos, True
         return None, pos, False
 
