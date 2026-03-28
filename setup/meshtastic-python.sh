@@ -32,6 +32,7 @@ STATUS_TOOL="${ROOT_DIR}/tools/meshtastic_status.py"
 MONITOR_TOOL="${ROOT_DIR}/tools/meshtastic_monitor.py"
 MESSAGES_TOOL="${ROOT_DIR}/tools/meshtastic_messages.py"
 PROTOCOL_TOOL="${ROOT_DIR}/tools/meshtastic_protocol.py"
+PLUGINS_TOOL="${ROOT_DIR}/tools/meshtastic_plugins.py"
 PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
@@ -99,6 +100,7 @@ Commands:
   monitor         Run the continuous Meshtastic event monitor from tools/
   messages        Send private messages, sync transcripts, or inspect logs under ~/.local/log/meshtastic/*.log
   protocol        Persist protocol-level mesh traffic and housekeeping events under ~/.local/log/meshtastic/*.log
+  plugins         Run a plugin-defined utility, for example: plugins STORE_FORWARD_APP stats
   proxy-start     Start the local Meshtastic serial-to-TCP proxy in the background
   proxy-stop      Stop the local Meshtastic proxy
   proxy-status    Show local Meshtastic proxy status
@@ -405,6 +407,13 @@ check_messages_tool() {
 check_protocol_tool() {
   if [[ ! -f "${PROTOCOL_TOOL}" ]]; then
     print_error "Protocol tool not found: ${PROTOCOL_TOOL}"
+    exit 1
+  fi
+}
+
+check_plugins_tool() {
+  if [[ ! -f "${PLUGINS_TOOL}" ]]; then
+    print_error "Plugins tool not found: ${PLUGINS_TOOL}"
     exit 1
   fi
 }
@@ -1794,6 +1803,11 @@ protocol() {
   fi
 }
 
+plugins() {
+  check_plugins_tool
+  run_in_venv python "${PLUGINS_TOOL}" --plugins-dir "${ROOT_DIR}/plugins" --runtime-dir "${RUNTIME_DIR}" "$@"
+}
+
 proxy_start() {
   check_proxy_tool
   ensure_python_packages
@@ -2271,6 +2285,10 @@ main() {
     protocol)
       shift
       protocol "$@"
+      ;;
+    plugins)
+      shift
+      plugins "$@"
       ;;
     proxy-start)
       proxy_start

@@ -243,6 +243,17 @@ main protocol capture --quiet
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "protocol:capture --quiet\n")
 
+    def test_main_dispatches_plugins(self) -> None:
+        result = run_wrapper_snippet(
+            """
+plugins() { printf 'plugins:%s\n' "$*"; }
+main plugins STORE_FORWARD_APP stats
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "plugins:STORE_FORWARD_APP stats\n")
+
     def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
         result = run_wrapper_snippet(
             """

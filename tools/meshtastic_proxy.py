@@ -35,6 +35,10 @@ except ModuleNotFoundError as exc:
 
 LOGGER = logging.getLogger("meshtastic_proxy")
 PLUGIN_LOOP_GUARD_TTL_SECONDS = 10.0
+CLIENT_SOCKET_TIMEOUT_SECONDS = 10.0
+CLIENT_KEEPALIVE_IDLE_SECONDS = 60
+CLIENT_KEEPALIVE_INTERVAL_SECONDS = 15
+CLIENT_KEEPALIVE_PROBES = 4
 
 
 @dataclass(eq=False)
@@ -83,6 +87,29 @@ class MeshtasticProxy:
         self.plugins = MeshtasticPluginManager(self.plugins_dir, LOGGER)
         self._plugin_loop_guard: dict[str, float] = {}
         self._plugin_loop_guard_lock = threading.Lock()
+
+    def configure_client_socket(self, sock: socket.socket) -> None:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.settimeout(CLIENT_SOCKET_TIMEOUT_SECONDS)
+
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError:
+            return
+
+        keepalive_options = (
+            ("TCP_KEEPIDLE", CLIENT_KEEPALIVE_IDLE_SECONDS),
+            ("TCP_KEEPINTVL", CLIENT_KEEPALIVE_INTERVAL_SECONDS),
+            ("TCP_KEEPCNT", CLIENT_KEEPALIVE_PROBES),
+        )
+        for option_name, option_value in keepalive_options:
+            option = getattr(socket, option_name, None)
+            if option is None:
+                continue
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, option, option_value)
+            except OSError:
+                LOGGER.debug("could not enable %s on client socket", option_name)
 
     def status_snapshot(self) -> dict[str, object]:
         snapshot = self.broker.snapshot()
@@ -246,6 +273,7 @@ class MeshtasticProxy:
 
     def plugin_store_append_jsonl(self, plugin_name: str, relative_path: str, record: dict[str, object]) -> str:
         path = self._plugin_storage_path(plugin_name, relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True))
             handle.write("\n")
@@ -255,8 +283,29 @@ class MeshtasticProxy:
         path = self._plugin_storage_path(plugin_name, relative_path)
         if not path.exists():
             return []
+        records: list[dict[str, object]] = []
         with open(path, encoding="utf-8") as handle:
-            records = [json.loads(line) for line in handle if line.strip()]
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    LOGGER.warning(
+                        "plugin storage skipped malformed jsonl line %s:%s: %s",
+                        path,
+                        line_number,
+                        exc,
+                    )
+                    continue
+                if not isinstance(record, dict):
+                    LOGGER.warning(
+                        "plugin storage skipped non-object jsonl record %s:%s",
+                        path,
+                        line_number,
+                    )
+                    continue
+                records.append(record)
         if limit is not None and limit >= 0:
             return records[-limit:]
         return records
@@ -486,7 +535,10 @@ class MeshtasticProxy:
         sock = client.sock
         try:
             while not self.stop_event.is_set():
-                data = sock.recv(512)
+                try:
+                    data = sock.recv(512)
+                except socket.timeout:
+                    continue
                 if not data:
                     break
                 decision = self.broker.handle_client_bytes(client.client_id, data)
@@ -520,7 +572,7 @@ class MeshtasticProxy:
                     LOGGER.exception("accept loop failed")
                 break
 
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.configure_client_socket(sock)
             client = self.register_client(sock, address)
             thread = threading.Thread(target=self.client_reader_loop, args=(client,), daemon=True)
             thread.start()

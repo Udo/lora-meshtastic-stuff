@@ -46,6 +46,7 @@ Common commands:
 ./setup/meshtastic-python.sh messages send WO67 "hello"
 ./setup/meshtastic-python.sh messages sync mesh-chat
 ./setup/meshtastic-python.sh protocol mesh-archive --quiet
+./setup/meshtastic-python.sh plugins STORE_FORWARD_APP stats
 ./setup/meshtastic-python.sh proxy-start
 ./setup/meshtastic-python.sh proxy-status
 ./setup/meshtastic-python.sh proxy-check
@@ -239,12 +240,20 @@ The wrapper also exposes `telemetry`, which delegates to `status telemetry`. The
 
 The proxy now supports hot-reloaded protocol plugins from the repo-local `plugins/` directory.
 
+For the full plugin architecture, runtime API, storage model, and a worked `STORE_FORWARD_APP` example, see [docs/meshtastic_plugins.md](docs/meshtastic_plugins.md).
+
 Plugin filename convention:
 
 - `plugins/STORE_FORWARD_APP.handler.py`
 - `plugins/65.handler.py`
 
 The proxy checks for both the symbolic Meshtastic port name and the numeric port number. Matching plugins are reloaded automatically when the file changes, so handler development does not require restarting the proxy.
+
+For `PRIVATE_APP`, the router now supports subtype dispatch:
+
+- if the payload is UTF-8 JSON with a top-level string `type`, it tries `plugins/PRIVATE_APP.<type>.handler.py`
+- if the payload starts with `type=<value>`, it tries `plugins/PRIVATE_APP.<value>.handler.py`
+- if no typed handler exists, it falls back to `plugins/PRIVATE_APP.handler.py`
 
 Supported plugin entry points:
 
@@ -266,8 +275,28 @@ Handler failures are isolated from the proxy data path. Exceptions are logged an
 
 The repo now includes a first built-in protocol plugin pair:
 
-- `plugins/STORE_FORWARD_APP.handler.py` answers store-and-forward ping, stats, and history requests for both local proxy clients and mesh-originated packets
-- `plugins/TEXT_MESSAGE_APP.handler.py` persists observed text packets and feeds the message history used by that store-and-forward handler
+- `plugins/STORE_FORWARD_APP.handler.py` answers store-and-forward ping, stats, and history requests for both local proxy clients and mesh-originated packets, and exposes a self-contained `stats` tool command
+- `plugins/TEXT_MESSAGE_APP.handler.py` persists observed text packets into a content-addressed store used by that store-and-forward handler
+
+Current store-forward storage behavior:
+
+- text messages are stored under `.runtime/meshtastic/plugins/TEXT_MESSAGE_APP/messages/<sha256>.json`
+- replay events are stored separately under `.runtime/meshtastic/plugins/TEXT_MESSAGE_APP/events/YYYY-MM-DD.jsonl`
+- each blob is content-addressed by a hash over stable message fields, while the dated event logs preserve arrival order and can preserve duplicates
+- the logical retention window is the last 30 days
+- optional `ROUTER_HEARTBEAT` emission is handled from `STORE_FORWARD_APP.tick()` using plugin-local config
+- heartbeat is enabled by default and this repo uses a default interval of `3600` seconds
+- duplicate replay is disabled by default and can be enabled with the plugin-local `replay_duplicates` flag
+- `STORE_FORWARD_APP.tick()` performs physical cleanup at most once per day
+- malformed plugin storage is skipped with warning logs instead of aborting stats, replay, or cleanup
+- plugin stats can be queried directly with:
+
+```bash
+tools/meshtastic_plugins.py STORE_FORWARD_APP stats
+./setup/meshtastic-python.sh plugins STORE_FORWARD_APP stats
+tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 3600
+tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
+```
 
 ## Protocol Logger
 

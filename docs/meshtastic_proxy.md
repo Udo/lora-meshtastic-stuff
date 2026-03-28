@@ -21,6 +21,7 @@
 - Broadcasts radio output to all connected TCP clients.
 - Delegates client-to-radio arbitration to `meshtastic_broker.py`.
 - Discovers packet handlers from the repo-local `plugins/` directory using `PORTNAME.handler.py` or `PORTNUM.handler.py` filenames.
+- For `PRIVATE_APP`, also supports subtype routing via `PRIVATE_APP.<type>.handler.py` when the payload exposes a parseable `type`.
 - Hot-reloads changed handler files without restarting the proxy.
 - Calls optional plugin entry points `handle_packet(event, api)`, `handle_client_call(event, api)`, and `tick(event, api)`.
 - Exposes a host-extension API so plugins can inspect mesh packets, persist state, and emit reply packets through the attached node without replacing firmware behavior.
@@ -31,6 +32,8 @@
 - Persistent service settings for the Linux autostart units live in `.runtime/meshtastic/service.env`.
 - On first `proxy-autostart-install`, the wrapper creates `.runtime/meshtastic/service.env`, prints its location, and exits so the file can be reviewed before installing the units.
 - After the units already exist, edits to `.runtime/meshtastic/service.env` only require restarting the service; rerun `proxy-autostart-install` only when the unit files themselves need refreshing.
+
+For full plugin architecture details, see [meshtastic_plugins.md](./meshtastic_plugins.md).
 
 ## Troubleshooting
 
@@ -45,6 +48,7 @@
 - Re-running `proxy-autostart-install` refreshes the unit files but preserves `.runtime/meshtastic/service.env`; use it for unit refreshes, not for ordinary config changes.
 - Plugin exceptions are logged but do not terminate the proxy. Under systemd, they show up in the service journal and any attached syslog-compatible collector.
 - Plugin state is stored under the proxy runtime directory in `plugins/<PLUGIN_NAME>/`, separate from the source `plugins/*.handler.py` files.
+- Plugins can optionally expose a self-contained CLI entry point via `plugin_command(argv, api)`, callable through `tools/meshtastic_plugins.py`.
 
 ## Architecture
 
@@ -87,5 +91,18 @@ def tick(event, api):
 
 Current repo plugins:
 
-- `plugins/STORE_FORWARD_APP.handler.py` provides a host-side store-and-forward extension that can answer both local proxy requests and mesh-originated requests.
-- `plugins/TEXT_MESSAGE_APP.handler.py` persists text packets into plugin storage and supplies the replay history used by `STORE_FORWARD_APP`.
+- `plugins/STORE_FORWARD_APP.handler.py` provides a host-side store-and-forward extension that can answer both local proxy requests and mesh-originated requests, print stats, and run daily retention cleanup from `tick()`.
+- `plugins/TEXT_MESSAGE_APP.handler.py` persists text packets into content-addressed JSON blobs plus dated event logs and supplies the replay history used by `STORE_FORWARD_APP`.
+
+Example plugin tool usage:
+
+```bash
+tools/meshtastic_plugins.py STORE_FORWARD_APP stats
+tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
+```
+
+`PRIVATE_APP` subtype routing rules:
+
+- JSON payloads with a top-level string `type` field route to `plugins/PRIVATE_APP.<type>.handler.py`
+- payloads beginning with `type=<value>` route to `plugins/PRIVATE_APP.<value>.handler.py`
+- if no subtype-specific handler exists, the proxy falls back to `plugins/PRIVATE_APP.handler.py`
