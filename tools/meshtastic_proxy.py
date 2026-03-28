@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 
 from _meshtastic_common import DEFAULT_SERIAL_PORT, DEFAULT_TCP_HOST, DEFAULT_TCP_PORT, ensure_repo_python
-from meshtastic.protobuf import admin_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
+from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 from meshtastic_broker import MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
 from meshtastic_plugins import MeshtasticPluginManager
 
@@ -43,6 +43,8 @@ CLIENT_KEEPALIVE_PROBES = 4
 DM_PLUGIN_DIRNAME = "DM"
 SERIAL_WAIT_SLICE_SECONDS = 0.25
 DM_MODE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+CHANNEL_REFRESH_INTERVAL_SECONDS = 300.0
+MAX_CHANNELS = 8
 
 
 @dataclass(eq=False)
@@ -94,6 +96,10 @@ class MeshtasticProxy:
         self._plugin_loop_guard: dict[str, float] = {}
         self._plugin_loop_guard_lock = threading.Lock()
         self._node_short_names: dict[int, str] = {}
+        self._local_short_name: str | None = None
+        self._channel_names_by_num: dict[int, str] = {}
+        self._channel_details_by_num: dict[int, dict[str, object]] = {}
+        self._channel_refresh_due_at = 0.0
 
     def configure_client_socket(self, sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -477,6 +483,19 @@ class MeshtasticProxy:
                 values[key] = value
         return values
 
+    def _config_flag(self, *keys: str, default: bool = False) -> bool:
+        config = self._load_proxy_config()
+        for key in keys:
+            raw = config.get(key)
+            if raw is None:
+                continue
+            value = raw.strip().lower()
+            if value in {"1", "true", "yes", "on"}:
+                return True
+            if value in {"0", "false", "no", "off"}:
+                return False
+        return default
+
     def _dm_mode(self) -> str | None:
         config = self._load_proxy_config()
         raw_value = (
@@ -508,6 +527,86 @@ class MeshtasticProxy:
         if short_name:
             self._node_short_names[node_num] = short_name
 
+    def _remember_admin_state(self, packet, portnum_name: str | None) -> None:
+        if packet is None or portnum_name != "ADMIN_APP":
+            return
+        admin_message = admin_pb2.AdminMessage()
+        try:
+            admin_message.ParseFromString(packet.decoded.payload)
+        except Exception:
+            LOGGER.debug("could not parse ADMIN_APP payload", exc_info=True)
+            return
+
+        owner = getattr(admin_message, "get_owner_response", None)
+        owner_short_name = str(getattr(owner, "short_name", "") or "").strip()
+        if owner_short_name:
+            self._local_short_name = owner_short_name
+
+        channel = getattr(admin_message, "get_channel_response", None)
+        channel_name = str(getattr(getattr(channel, "settings", None), "name", "") or "")
+        try:
+            channel_num = int(getattr(getattr(channel, "settings", None), "channel_num", 0) or 0)
+        except (TypeError, ValueError):
+            channel_num = 0
+        if channel_num:
+            self._channel_names_by_num[channel_num] = channel_name
+            psk = bytes(getattr(getattr(channel, "settings", None), "psk", b""))
+            role = channel_pb2.Channel.Role.Name(int(getattr(channel, "role", channel_pb2.Channel.Role.DISABLED)))
+            self._channel_details_by_num[channel_num] = {
+                "channel_name": channel_name,
+                "channel_num": channel_num,
+                "index": int(getattr(channel, "index", 0)),
+                "role": role,
+                "psk": psk,
+            }
+
+    def _send_admin_probe(self, admin_message: admin_pb2.AdminMessage) -> None:
+        to_radio = mesh_pb2.ToRadio()
+        to_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
+        to_radio.packet.decoded.payload = admin_message.SerializeToString()
+        to_radio.packet.decoded.want_response = True
+        self.send_toradio(to_radio)
+
+    def _refresh_local_metadata(self, *, force: bool = False) -> None:
+        now = time.time()
+        if not force and now < self._channel_refresh_due_at:
+            return
+        if not self.serial_ready.is_set():
+            return
+        self._channel_refresh_due_at = now + CHANNEL_REFRESH_INTERVAL_SECONDS
+
+        owner_request = admin_pb2.AdminMessage()
+        owner_request.get_owner_request = True
+        self._send_admin_probe(owner_request)
+
+        for channel_index in range(MAX_CHANNELS):
+            channel_request = admin_pb2.AdminMessage()
+            channel_request.get_channel_request = channel_index + 1
+            self._send_admin_probe(channel_request)
+
+    def _channel_plugins_allow_public_primary(self) -> bool:
+        return self._config_flag(
+            "channel_plugins_allow_public_primary",
+            "CHANNEL_PLUGINS_ALLOW_PUBLIC_PRIMARY",
+            "MESHTASTIC_CHANNEL_PLUGINS_ALLOW_PUBLIC_PRIMARY",
+            default=False,
+        )
+
+    def _is_public_primary_channel(self, channel_detail: dict[str, object] | None) -> bool:
+        if not isinstance(channel_detail, dict):
+            return False
+        if channel_detail.get("role") != "PRIMARY":
+            return False
+        psk = channel_detail.get("psk")
+        if not isinstance(psk, (bytes, bytearray)):
+            return False
+        psk_bytes = bytes(psk)
+        if len(psk_bytes) == 0:
+            return True
+        if len(psk_bytes) == 1 and psk_bytes[0] in {0, 1}:
+            return True
+        return False
+
     def _direct_message_first_word(self, payload: bytes) -> str | None:
         try:
             text = payload.decode("utf-8").strip()
@@ -527,6 +626,116 @@ class MeshtasticProxy:
             return False
         packet_to = int(event.get("packet_to") or 0)
         return packet_to != 0
+
+    def _channel_namespace(self, channel_name: str | None) -> str | None:
+        if not channel_name:
+            return None
+        if "/" in channel_name or "\\" in channel_name:
+            return None
+        return f"CHAN_{channel_name}"
+
+    def _text_payload(self, event: dict[str, object]) -> str | None:
+        payload = event.get("payload")
+        if not isinstance(payload, (bytes, bytearray)):
+            return None
+        try:
+            return bytes(payload).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    def _parse_local_channel_command(self, event: dict[str, object]) -> tuple[bool, str | None]:
+        text = self._text_payload(event)
+        if text is None:
+            return False, None
+
+        local_short_name = str(self._local_short_name or "").strip()
+        if not local_short_name:
+            return False, None
+
+        trimmed = text.lstrip()
+        candidates = (local_short_name, f"@{local_short_name}")
+        matched_prefix = None
+        for candidate in candidates:
+            if trimmed.lower().startswith(candidate.lower()):
+                matched_prefix = candidate
+                break
+        if matched_prefix is None:
+            return False, None
+
+        remainder = trimmed[len(matched_prefix):]
+        remainder = remainder.lstrip(" \t:,-")
+        if not remainder:
+            return True, None
+        command = remainder.split(maxsplit=1)[0]
+        if not command or "/" in command or "\\" in command:
+            return True, None
+        return True, command
+
+    def _dispatch_channel_plugins(self, event: dict[str, object], api: dict[str, object]) -> bool:
+        if event.get("event_type") != "packet" or event.get("portnum_name") != "TEXT_MESSAGE_APP":
+            return False
+
+        try:
+            channel_num = int(event.get("packet_channel") or 0)
+        except (TypeError, ValueError):
+            channel_num = 0
+        channel_detail = self._channel_details_by_num.get(channel_num, {})
+        channel_name = self._channel_names_by_num.get(channel_num)
+        namespace = self._channel_namespace(channel_name)
+        if namespace is None:
+            return False
+        if self._is_public_primary_channel(channel_detail) and not self._channel_plugins_allow_public_primary():
+            LOGGER.debug("skipping channel plugins for public primary channel %s", channel_name or channel_num)
+            return False
+
+        current_event = dict(event)
+        current_event["channel_name"] = channel_name
+        current_event["channel_num"] = channel_num
+        current_event["channel_role"] = channel_detail.get("role")
+        current_event["local_short_name"] = self._local_short_name
+        addressed_to_local, command = self._parse_local_channel_command(current_event)
+        current_event["channel_addressed_to_local"] = addressed_to_local
+        current_event["channel_command"] = command
+
+        handled = False
+        result = self.plugins.call_relative(f"{namespace}/handler_alltraffic.py", "handle_packet", current_event, api)
+        if result is not None or (Path(self.plugins_dir) / f"{namespace}/handler_alltraffic.py").exists():
+            handled = True
+            continue_chain, current_event = self._apply_dm_handler_result(result, current_event)
+            if not continue_chain:
+                return handled
+            current_event["channel_name"] = channel_name
+            current_event["channel_num"] = channel_num
+            current_event["channel_role"] = channel_detail.get("role")
+            current_event["local_short_name"] = self._local_short_name
+            addressed_to_local, command = self._parse_local_channel_command(current_event)
+            current_event["channel_addressed_to_local"] = addressed_to_local
+            current_event["channel_command"] = command
+
+        if not current_event.get("channel_addressed_to_local"):
+            return handled
+
+        candidate_paths = [f"{namespace}/handler_first.py"]
+        if current_event.get("channel_command"):
+            candidate_paths.append(f"{namespace}/{current_event['channel_command']}.handler.py")
+        candidate_paths.append(f"{namespace}/handler.py")
+
+        for relative_path in candidate_paths:
+            result = self.plugins.call_relative(relative_path, "handle_packet", current_event, api)
+            if result is None and not (Path(self.plugins_dir) / relative_path).exists():
+                continue
+            handled = True
+            continue_chain, current_event = self._apply_dm_handler_result(result, current_event)
+            if not continue_chain:
+                return handled
+            current_event["channel_name"] = channel_name
+            current_event["channel_num"] = channel_num
+            current_event["channel_role"] = channel_detail.get("role")
+            current_event["local_short_name"] = self._local_short_name
+            addressed_to_local, command = self._parse_local_channel_command(current_event)
+            current_event["channel_addressed_to_local"] = addressed_to_local
+            current_event["channel_command"] = command
+        return handled
 
     def _dm_namespace_paths(self, namespace: str, event: dict[str, object]) -> list[str]:
         candidate_paths = [f"{namespace}/handler_first.py"]
@@ -551,6 +760,7 @@ class MeshtasticProxy:
             "message": message,
             "mesh_packet": packet,
             "payload": bytes(packet.decoded.payload),
+            "packet_channel": int(getattr(packet, "channel", 0)),
             "portnum": portnum,
             "portnum_name": portnum_name,
             "plugin_origin_likely": self._is_recent_plugin_send(portnum, bytes(packet.decoded.payload), int(getattr(packet, "to", 0))),
@@ -613,6 +823,7 @@ class MeshtasticProxy:
             if portnum is None:
                 continue
             self._remember_node_short_name(packet, portnum_name)
+            self._remember_admin_state(packet, portnum_name)
             event = {
                 "event_type": "packet",
                 "direction": "radio_to_clients",
@@ -620,6 +831,7 @@ class MeshtasticProxy:
                 "message": observed.message,
                 "mesh_packet": packet,
                 "payload": bytes(packet.decoded.payload),
+                "packet_channel": int(getattr(packet, "channel", 0)),
                 "portnum": portnum,
                 "portnum_name": portnum_name,
                 "plugin_origin_likely": self._is_recent_plugin_send(portnum, bytes(packet.decoded.payload), int(getattr(packet, "to", 0))),
@@ -627,6 +839,7 @@ class MeshtasticProxy:
             }
             event.update(self._message_metadata(observed.message, packet, "radio_to_clients"))
             self.plugins.dispatch_packet(portnum_name, portnum, event, api)
+            self._dispatch_channel_plugins(event, api)
             self._dispatch_dm_plugins(event, api)
 
     def _handle_client_plugins(self, client: ClientConnection, forwarded_frames: list[bytes]) -> list[bytes]:
@@ -668,6 +881,7 @@ class MeshtasticProxy:
 
     def plugin_tick_loop(self) -> None:
         while not self.stop_event.wait(self.tick_interval):
+            self._refresh_local_metadata()
             self.plugins.tick(self.build_plugin_api())
 
     def serial_reader_loop(self) -> None:
@@ -679,9 +893,11 @@ class MeshtasticProxy:
             with self.serial_lock:
                 self.serial_handle = handle
                 self.serial_ready.set()
+            self._refresh_local_metadata(force=True)
 
             try:
                 while not self.stop_event.is_set():
+                    self._refresh_local_metadata()
                     chunk = handle.read(512)
                     if chunk:
                         observed_frames = self.broker.observe_radio_bytes(chunk)

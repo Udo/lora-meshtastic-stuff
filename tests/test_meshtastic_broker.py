@@ -17,7 +17,7 @@ TOOLS_DIR = REPO_ROOT / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from meshtastic.protobuf import admin_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
+from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 
 from tools.meshtastic_broker import FrameParser, MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
 from tools.meshtastic_proxy import MeshtasticProxy
@@ -126,6 +126,7 @@ def make_fromradio_text_frame(payload: bytes = b"hello-radio") -> bytes:
     from_radio = mesh_pb2.FromRadio()
     setattr(from_radio.packet, "from", 42)
     from_radio.packet.to = 0
+    from_radio.packet.channel = 0
     from_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
     from_radio.packet.decoded.payload = payload
     return encode_frame(from_radio.SerializeToString())
@@ -135,6 +136,17 @@ def make_fromradio_direct_text_frame(payload: bytes, *, from_node: int = 42, to_
     from_radio = mesh_pb2.FromRadio()
     setattr(from_radio.packet, "from", from_node)
     from_radio.packet.to = to_node
+    from_radio.packet.channel = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
+    from_radio.packet.decoded.payload = payload
+    return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_channel_text_frame(payload: bytes, *, from_node: int = 42, to_node: int = 0, channel_num: int = 2) -> bytes:
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = to_node
+    from_radio.packet.channel = channel_num
     from_radio.packet.decoded.portnum = portnums_pb2.TEXT_MESSAGE_APP
     from_radio.packet.decoded.payload = payload
     return encode_frame(from_radio.SerializeToString())
@@ -147,8 +159,46 @@ def make_fromradio_nodeinfo_frame(short_name: str, *, from_node: int = 42) -> by
     from_radio = mesh_pb2.FromRadio()
     setattr(from_radio.packet, "from", from_node)
     from_radio.packet.to = 0
+    from_radio.packet.channel = 0
     from_radio.packet.decoded.portnum = portnums_pb2.NODEINFO_APP
     from_radio.packet.decoded.payload = user.SerializeToString()
+    return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_admin_owner_response_frame(short_name: str, *, from_node: int = 1) -> bytes:
+    admin_message = admin_pb2.AdminMessage()
+    admin_message.get_owner_response.short_name = short_name
+
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = 0
+    from_radio.packet.channel = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
+    from_radio.packet.decoded.payload = admin_message.SerializeToString()
+    return encode_frame(from_radio.SerializeToString())
+
+
+def make_fromradio_admin_channel_response_frame(
+    channel_name: str,
+    *,
+    channel_num: int = 2,
+    index: int = 0,
+    from_node: int = 1,
+    psk: bytes = b"\x02",
+) -> bytes:
+    admin_message = admin_pb2.AdminMessage()
+    admin_message.get_channel_response.index = index
+    admin_message.get_channel_response.role = channel_pb2.Channel.Role.PRIMARY if index == 0 else channel_pb2.Channel.Role.SECONDARY
+    admin_message.get_channel_response.settings.name = channel_name
+    admin_message.get_channel_response.settings.channel_num = channel_num
+    admin_message.get_channel_response.settings.psk = psk
+
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = 0
+    from_radio.packet.channel = 0
+    from_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
+    from_radio.packet.decoded.payload = admin_message.SerializeToString()
     return encode_frame(from_radio.SerializeToString())
 
 
@@ -208,6 +258,28 @@ def wait_until(predicate, timeout: float = 2.0, interval: float = 0.01) -> None:
             return
         time.sleep(interval)
     raise AssertionError("condition was not met before timeout")
+
+
+def is_proxy_admin_probe(frame: bytes) -> bool:
+    try:
+        message = decode_toradio_frame(frame)
+    except Exception:
+        return False
+    if not message.HasField("packet") or not message.packet.HasField("decoded"):
+        return False
+    if message.packet.decoded.portnum != portnums_pb2.ADMIN_APP:
+        return False
+    admin_message = admin_pb2.AdminMessage()
+    try:
+        admin_message.ParseFromString(message.packet.decoded.payload)
+    except Exception:
+        return False
+    variant = admin_message.WhichOneof("payload_variant")
+    return variant in {"get_owner_request", "get_channel_request"}
+
+
+def non_probe_writes(writes: list[bytes]) -> list[bytes]:
+    return [frame for frame in writes if not is_proxy_admin_probe(frame)]
 
 
 class FakeSerialHandle:
@@ -507,6 +579,20 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         self.assertEqual(stalled_socket.shutdown_calls, 1)
         self.assertEqual(stalled_socket.close_calls, 1)
 
+    def test_proxy_queries_owner_and_channels_on_startup(self) -> None:
+        probe_frames = [frame for frame in self.fake_serial.writes if is_proxy_admin_probe(frame)]
+        self.assertGreaterEqual(len(probe_frames), 1 + 8)
+
+        admin_variants = []
+        for frame in probe_frames:
+            message = decode_toradio_frame(frame)
+            admin_message = admin_pb2.AdminMessage()
+            admin_message.ParseFromString(message.packet.decoded.payload)
+            admin_variants.append(admin_message.WhichOneof("payload_variant"))
+
+        self.assertIn("get_owner_request", admin_variants)
+        self.assertGreaterEqual(admin_variants.count("get_channel_request"), 8)
+
     def test_proxy_arbitrates_control_writes_and_broadcasts_serial_data(self) -> None:
         owner_frame = make_admin_write_frame()
         denied_frame = make_admin_write_frame()
@@ -520,13 +606,13 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
                 wait_until(lambda: self.read_status().get("client_count") == 2)
 
                 client_a.sendall(owner_frame)
-                wait_until(lambda: self.fake_serial.writes == [owner_frame])
+                wait_until(lambda: non_probe_writes(self.fake_serial.writes) == [owner_frame])
 
                 client_b.sendall(denied_frame)
                 denied_message = client_b.recv(1024)
 
                 self.assertIn(b"[broker] control session busy", denied_message)
-                self.assertEqual(self.fake_serial.writes, [owner_frame])
+                self.assertEqual(non_probe_writes(self.fake_serial.writes), [owner_frame])
 
                 self.fake_serial.inject_read(radio_chunk)
                 received_a = client_a.recv(len(radio_chunk))
@@ -897,6 +983,113 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             ["word:hello one", "generic:hello two"],
         )
 
+    def test_channel_plugin_routes_by_channel_name_and_local_mention(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-routing.txt"
+        chan_dir = self.plugins_dir / "CHAN_Friends"
+        chan_dir.mkdir()
+        (chan_dir / "ping.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(str(event.get('channel_name')) + ':' + str(event.get('channel_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(make_fromradio_admin_channel_response_frame("Friends", channel_num=2, index=1))
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"@UDO1 ping now", from_node=55, channel_num=2))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["Friends:ping"])
+
+    def test_channel_plugin_does_not_fire_without_local_name_prefix_except_alltraffic(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-alltraffic.txt"
+        chan_dir = self.plugins_dir / "CHAN_Friends"
+        chan_dir.mkdir()
+        (chan_dir / "handler_alltraffic.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('all:' + event['payload'].decode('utf-8') + '\\n')\n"
+            "    return {'continue_chain': True}\n",
+            encoding="utf-8",
+        )
+        (chan_dir / "ping.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('cmd\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(make_fromradio_admin_channel_response_frame("Friends", channel_num=2, index=1))
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"ping now", from_node=55, channel_num=2))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["all:ping now"])
+
+    def test_channel_handler_first_and_generic_use_command_after_local_prefix(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-order.txt"
+        chan_dir = self.plugins_dir / "CHAN_Friends"
+        chan_dir.mkdir()
+        (chan_dir / "handler_first.py").write_text(
+            "def handle_packet(event, api):\n"
+            "    return {'continue_chain': True}\n",
+            encoding="utf-8",
+        )
+        (chan_dir / "handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(str(event.get('channel_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(make_fromradio_admin_channel_response_frame("Friends", channel_num=2, index=1))
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"UDO1: hello there", from_node=55, channel_num=2))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["hello"])
+
+    def test_channel_plugins_are_blocked_on_public_primary_by_default(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-public-primary.txt"
+        chan_dir = self.plugins_dir / "CHAN_Public"
+        chan_dir.mkdir()
+        (chan_dir / "handler_alltraffic.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('should-not-run\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(
+            make_fromradio_admin_channel_response_frame("Public", channel_num=2, index=0, psk=b"\x01")
+        )
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"hello mesh", from_node=55, channel_num=2))
+        time.sleep(0.1)
+
+        self.assertFalse(output_file.exists())
+
+    def test_channel_plugins_can_be_enabled_on_public_primary_via_config(self) -> None:
+        pathlib.Path(self.config_file).write_text("channel_plugins_allow_public_primary=yes\n", encoding="utf-8")
+        output_file = pathlib.Path(self.temp_dir.name) / "chan-public-primary-enabled.txt"
+        chan_dir = self.plugins_dir / "CHAN_Public"
+        chan_dir.mkdir()
+        (chan_dir / "handler_alltraffic.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(str(event.get('channel_name')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1"))
+        self.fake_serial.inject_read(
+            make_fromradio_admin_channel_response_frame("Public", channel_num=2, index=0, psk=b"\x01")
+        )
+        self.fake_serial.inject_read(make_fromradio_channel_text_frame(b"hello mesh", from_node=55, channel_num=2))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["Public"])
+
 
 class StoreForwardPluginTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -963,7 +1156,7 @@ class StoreForwardPluginTests(unittest.TestCase):
             client.sendall(make_storeforward_client_frame(storeforward_pb2.StoreAndForward.CLIENT_PING))
             frames = recv_fromradio_frames(client, expected_count=1)
 
-        self.assertEqual(self.fake_serial.writes, [])
+        self.assertEqual(non_probe_writes(self.fake_serial.writes), [])
         response = storeforward_pb2.StoreAndForward()
         response.ParseFromString(frames[0].packet.decoded.payload)
         self.assertEqual(frames[0].packet.decoded.portnum, portnums_pb2.STORE_FORWARD_APP)
@@ -971,9 +1164,9 @@ class StoreForwardPluginTests(unittest.TestCase):
 
     def test_store_forward_handler_replies_to_mesh_request_through_serial(self) -> None:
         self.fake_serial.inject_read(make_fromradio_storeforward_request_frame(storeforward_pb2.StoreAndForward.CLIENT_PING, from_node=91))
-        wait_until(lambda: len(self.fake_serial.writes) == 1)
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) == 1)
 
-        reply = decode_toradio_frame(self.fake_serial.writes[0])
+        reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[0])
         response = storeforward_pb2.StoreAndForward()
         response.ParseFromString(reply.packet.decoded.payload)
 
@@ -1015,7 +1208,7 @@ class StoreForwardPluginTests(unittest.TestCase):
             )
             history_frames = recv_fromradio_frames(client, expected_count=3)
 
-        self.assertEqual(self.fake_serial.writes, [])
+        self.assertEqual(non_probe_writes(self.fake_serial.writes), [])
 
         summary = storeforward_pb2.StoreAndForward()
         summary.ParseFromString(history_frames[0].packet.decoded.payload)
@@ -1207,9 +1400,9 @@ class StoreForwardPluginTests(unittest.TestCase):
         )
 
         self.proxy.plugins.tick(self.proxy.build_plugin_api())
-        self.assertEqual(len(self.fake_serial.writes), 1)
+        self.assertEqual(len(non_probe_writes(self.fake_serial.writes)), 1)
 
-        heartbeat_write = decode_toradio_frame(self.fake_serial.writes[0])
+        heartbeat_write = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[0])
         self.assertEqual(heartbeat_write.packet.to, 0)
         self.assertEqual(heartbeat_write.packet.decoded.portnum, portnums_pb2.STORE_FORWARD_APP)
         heartbeat = storeforward_pb2.StoreAndForward()
@@ -1220,7 +1413,7 @@ class StoreForwardPluginTests(unittest.TestCase):
         self.assertTrue((config_dir / "heartbeat.json").exists())
 
         self.proxy.plugins.tick(self.proxy.build_plugin_api())
-        self.assertEqual(len(self.fake_serial.writes), 1)
+        self.assertEqual(len(non_probe_writes(self.fake_serial.writes)), 1)
 
     def test_store_forward_skips_malformed_storage_and_logs_warning(self) -> None:
         message_dir = self.proxy.plugin_state_dir / "TEXT_MESSAGE_APP" / "messages"

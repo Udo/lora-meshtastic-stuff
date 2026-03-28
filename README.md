@@ -310,6 +310,19 @@ DM handlers stop the chain by default. To continue, return a dict containing `co
 
 The detailed DM documentation, including examples for `handler_first.py`, sender-specific handlers, sanitizers, `dm_mode`, and continue/rewrite chaining, lives in [docs/meshtastic_plugins.md](docs/meshtastic_plugins.md).
 
+Inbound text traffic can also route through channel-specific plugin namespaces under `plugins/CHAN_<channel name>/`.
+The order is:
+
+- `plugins/CHAN_<channel name>/handler_alltraffic.py`
+- `plugins/CHAN_<channel name>/handler_first.py`
+- `plugins/CHAN_<channel name>/<first word after local-name prefix>.handler.py`
+- `plugins/CHAN_<channel name>/handler.py`
+
+Except for `handler_alltraffic.py`, channel handlers only run when the incoming text starts with the local node short name, optionally prefixed with `@`. The proxy learns the local short name and channel-name mapping opportunistically from observed admin traffic. Full details and examples live in [docs/meshtastic_plugins.md](docs/meshtastic_plugins.md).
+
+The proxy now also actively refreshes owner and channel metadata on startup and periodically through read-only admin queries, so channel and DM routing do not depend entirely on incidental mesh traffic.
+As a safety measure, channel plugins are blocked by default on a `PRIMARY` channel using `none` or `default` PSK. You can opt in explicitly through the proxy config file if you really want automation there.
+
 Supported plugin entry points:
 
 - `handle_packet(event, api)` for radio-to-client traffic seen from the attached node

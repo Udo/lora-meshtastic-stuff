@@ -60,6 +60,16 @@ To continue the chain, a handler can return a dict with `continue_chain: True`.
 To rewrite the message for downstream DM handlers, it can also return `message: <mesh_pb2.FromRadio>`.
 The rewritten message only affects later DM handlers in the chain; it does not rewrite the original radio broadcast to connected clients.
 
+Inbound text packets can also route through channel-specific plugin namespaces under:
+
+- `plugins/CHAN_<channel name>/handler_alltraffic.py`
+- `plugins/CHAN_<channel name>/handler_first.py`
+- `plugins/CHAN_<channel name>/<first word after local-name prefix>.handler.py`
+- `plugins/CHAN_<channel name>/handler.py`
+
+The channel router only applies to inbound `TEXT_MESSAGE_APP` packets whose numeric packet channel can be mapped to a locally configured channel name.
+The proxy actively queries the local node for owner and channel metadata on startup and periodically afterwards, and it also updates that cache from observed `ADMIN_APP` responses.
+
 ### DM Routing Details
 
 DM routing is intentionally separate from the normal port plugin lookup.
@@ -158,6 +168,161 @@ Operationally, that means:
 - deleting a DM handler file removes it from consideration on the next matching dispatch
 
 Proxy restart is not required for any of those cases.
+
+## Channel Plugin Routing
+
+Channel plugins are intended for public or shared-channel command workflows where traffic should only trigger handlers when the text is clearly addressed to the local node.
+
+### Resolution Order
+
+For a resolved channel name like `Friends`, the proxy tries:
+
+- `plugins/CHAN_Friends/handler_alltraffic.py`
+- `plugins/CHAN_Friends/handler_first.py`
+- `plugins/CHAN_Friends/<command>.handler.py`
+- `plugins/CHAN_Friends/handler.py`
+
+### Local-Name Prefix Requirement
+
+Except for `handler_alltraffic.py`, channel handlers only run if the text payload starts with the local node short name, optionally prefixed by `@`.
+
+Accepted examples:
+
+- `UDO1 ping`
+- `@UDO1 ping`
+- `UDO1: ping`
+- `@UDO1, ping`
+
+Non-matching examples:
+
+- `ping UDO1`
+- `hello mesh`
+- `@OTHER ping`
+
+Matching is case-insensitive.
+
+After the local-name prefix is removed, the first remaining word becomes the command token used for `<command>.handler.py`.
+
+Example:
+
+- payload `@UDO1 ping now` tries `plugins/CHAN_Friends/ping.handler.py`
+- payload `UDO1: reboot please` tries `plugins/CHAN_Friends/reboot.handler.py`
+
+If there is no remaining command word, the command-specific step is skipped and the chain continues with `handler.py`.
+
+### `handler_alltraffic.py`
+
+`handler_alltraffic.py` is the exception to the local-name prefix rule.
+It fires for all incoming text packets on that resolved channel, whether or not they are addressed to the local node.
+
+That makes it powerful and dangerous. It is appropriate for things like:
+
+- protocol translation
+- statistics or audit collection
+- mesh-side bridging
+- packet normalization that must see every message on the channel
+
+It should not be used casually for bot-style commands, because it sees unrelated channel traffic too.
+
+### Public Primary Safety Guard
+
+By default, channel plugins do not run on the primary channel if that channel is using the public/default security posture:
+
+- `psk = none`
+- `psk = default`
+
+That guard applies to the entire `CHAN_*` namespace, including `handler_alltraffic.py`.
+The goal is to avoid accidental automation on the shared public primary channel.
+
+If you explicitly want to allow it, set one of these config keys in the proxy config file:
+
+- `channel_plugins_allow_public_primary=yes`
+- `CHANNEL_PLUGINS_ALLOW_PUBLIC_PRIMARY=yes`
+- `MESHTASTIC_CHANNEL_PLUGINS_ALLOW_PUBLIC_PRIMARY=yes`
+
+Like DM handlers, channel handlers can return:
+
+- `{"continue_chain": True}` to continue
+- `{"continue_chain": True, "message": <mesh_pb2.FromRadio>}` to rewrite the packet seen by later channel handlers
+
+If `handler_alltraffic.py` rewrites the message, the local-name prefix and command token are recalculated from the rewritten text before the rest of the channel chain runs.
+
+### Local Metadata Learning
+
+The channel router depends on two locally learned values:
+
+- the local node short name, queried from and refreshed through `ADMIN_APP.get_owner_request/get_owner_response`
+- the channel name for a numeric packet channel, queried from and refreshed through `ADMIN_APP.get_channel_request/get_channel_response`
+
+If the proxy has not learned them yet, channel plugin routing is skipped for that packet.
+Once the proxy has learned them, the mapping is reused and hot reload behaves the same way as for all other plugin namespaces.
+
+## Channel Examples
+
+### Example 1: Public-Channel Bot Command
+
+```python
+# plugins/CHAN_Friends/ping.handler.py
+def handle_packet(event, api):
+    api["logger"].info(
+        "channel=%s from=%s command=%s text=%r",
+        event.get("channel_name"),
+        event.get("packet_from"),
+        event.get("channel_command"),
+        event["payload"],
+    )
+```
+
+This only runs for messages like `UDO1 ping` or `@UDO1 ping` on the `Friends` channel.
+
+### Example 2: Generic Mention Handler
+
+```python
+# plugins/CHAN_Friends/handler.py
+def handle_packet(event, api):
+    api["logger"].info(
+        "fallback mention on %s: %r",
+        event.get("channel_name"),
+        event["payload"].decode("utf-8", errors="replace"),
+    )
+```
+
+This catches addressed messages on that channel when no command-specific file exists.
+
+### Example 3: All-Traffic Protocol Layer
+
+```python
+# plugins/CHAN_Friends/handler_alltraffic.py
+def handle_packet(event, api):
+    api["logger"].info(
+        "saw every packet on %s: %r",
+        event.get("channel_name"),
+        event["payload"],
+    )
+    return {"continue_chain": True}
+```
+
+This sees every incoming text packet on the `Friends` channel, not just messages addressed to the local node.
+
+### Example 4: Mention Normalizer Before Command Dispatch
+
+```python
+# plugins/CHAN_Friends/handler_first.py
+def handle_packet(event, api):
+    message = api["mesh_pb2"].FromRadio()
+    message.CopyFrom(event["message"])
+
+    text = event["payload"].decode("utf-8", errors="replace").strip()
+    text = " ".join(text.split())
+    message.packet.decoded.payload = text.encode("utf-8")
+
+    return {
+        "continue_chain": True,
+        "message": message,
+    }
+```
+
+This normalizes whitespace and lets the command-specific step re-evaluate the cleaned message.
 
 ## DM Examples
 
@@ -307,6 +472,14 @@ DM handlers also receive:
 - `direct_message`
 - `dm_command`
 - `sender_short_name`
+
+Channel handlers also receive:
+
+- `channel_name`
+- `channel_num`
+- `channel_addressed_to_local`
+- `channel_command`
+- `local_short_name`
 
 Client-originated events also include client metadata such as `client_id`.
 

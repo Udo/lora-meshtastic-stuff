@@ -23,6 +23,8 @@
 - Discovers packet handlers from the repo-local `plugins/` directory using `PORTNAME.handler.py` or `PORTNUM.handler.py` filenames.
 - For `PRIVATE_APP`, also supports subtype routing via `PRIVATE_APP.<type>.handler.py` when the payload exposes a parseable `type`.
 - For inbound direct text messages, also supports the DM handler chain under `plugins/DM/` and optionally `plugins/DM_<dm_mode>/`.
+- For inbound text packets with a resolved channel name, also supports channel plugin chains under `plugins/CHAN_<channel name>/`.
+- Actively refreshes local owner and channel metadata on startup and periodically through read-only `ADMIN_APP` queries so DM and channel routing do not depend solely on incidental traffic.
 - Hot-reloads changed handler files without restarting the proxy.
 - Calls optional plugin entry points `handle_packet(event, api)`, `handle_client_call(event, api)`, and `tick(event, api)`.
 - Exposes a host-extension API so plugins can inspect mesh packets, persist state, and emit reply packets through the attached node without replacing firmware behavior.
@@ -117,3 +119,14 @@ Direct-message routing rules:
 - a DM handler can return `{"continue_chain": True}` to continue or also include `message: <mesh_pb2.FromRadio>` to rewrite the packet seen by downstream DM handlers
 
 For the full DM behavior, examples, and caveats around sender short names, see [meshtastic_plugins.md](./meshtastic_plugins.md).
+
+Channel-message routing rules:
+
+- only inbound `TEXT_MESSAGE_APP` packets with a resolvable numeric packet channel enter the channel chain
+- the proxy queries and refreshes channel names through `ADMIN_APP.get_channel_request/get_channel_response`
+- the proxy queries and refreshes the local short name through `ADMIN_APP.get_owner_request/get_owner_response`
+- per channel namespace, the order is `handler_alltraffic.py`, `handler_first.py`, first-word command handler, then `handler.py`
+- except for `handler_alltraffic.py`, handlers only run if the text starts with the local short name, optionally prefixed with `@`
+- by default, channel plugins are blocked on a `PRIMARY` channel using `none` or `default` PSK; opt in explicitly if you really want automation there
+
+For the full channel-plugin behavior and examples, see [meshtastic_plugins.md](./meshtastic_plugins.md).
