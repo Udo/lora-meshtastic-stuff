@@ -8,6 +8,7 @@
 ./setup/meshtastic-python.sh get range_test.sender
 ./setup/meshtastic-python.sh set range_test.sender 0
 ./setup/meshtastic-python.sh channels list
+./setup/meshtastic-python.sh channels url
 ./setup/meshtastic-python.sh telemetry --type environment
 ./setup/meshtastic-python.sh telemetry cached --type environment
 ./setup/meshtastic-python.sh monitor --only connection,node
@@ -24,7 +25,7 @@
 - For a primer on the main Meshtastic application protocols and app ports, see [meshtastic_protocols.md](./meshtastic_protocols.md).
 - `meshtastic_status.py` is the read-oriented inspection tool for summary, config, channels, nodes, and a few Meshtastic CLI passthrough operations.
 - The wrapper-level `get` and `set` commands expose raw Meshtastic preference access for fields like `range_test.sender` or `telemetry.environment_update_interval`.
-- The wrapper-level `channels` command group exposes Meshtastic channel inspection and common channel-management actions such as add, delete, set, enable, disable, and QR export.
+- The wrapper-level `channels` command group exposes Meshtastic channel inspection and common channel-management actions such as URL export, add, delete, set, enable, disable, and QR export.
 - For the full `get` / `set` field list, see [meshtastic_get_set_fields.md](./meshtastic_get_set_fields.md).
 - The wrapper-level `telemetry` command uses `meshtastic_status.py telemetry` for either active polling or cached telemetry display, with direct neighbors preferred over multihop nodes.
 - `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.

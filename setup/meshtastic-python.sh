@@ -95,7 +95,7 @@ Commands:
   set-modem-preset Set the LoRa modem preset on the connected node
   set-position    Set a fixed node position as latitude/longitude[/altitude]
   clear-position  Remove the configured fixed node position
-  channels        Inspect or manage channels (list|add|delete|enable|disable|set|set-url|add-url|qr|qr-all)
+  channels        Inspect or manage channels (list|url|add|delete|enable|disable|set|set-url|add-url|qr|qr-all)
   set-ham         Set licensed ham ID and disable encryption
   set-wifi        Enable WiFi client mode and store SSID/PSK on the node
   status          Run the pretty Meshtastic status tool from tools/
@@ -1554,6 +1554,62 @@ export_config() {
   run_meshtastic_cli --export-config
 }
 
+normalize_channel_url() {
+  local url="${1:-}"
+  printf '%s' "${url}" | tr -d '[:space:]'
+}
+
+channel_url() {
+  local scope="${1:-all}"
+  local include_all=1
+  local host
+
+  case "${scope}" in
+    all)
+      include_all=1
+      ;;
+    primary)
+      include_all=0
+      ;;
+    *)
+      echo "Usage: setup/meshtastic-python.sh channels url [all|primary]" >&2
+      exit 1
+      ;;
+  esac
+
+  host="$(effective_host || true)"
+  run_in_venv python - "${ROOT_DIR}" "${PORT}" "${host}" "${TCP_PORT}" "${include_all}" <<'PY'
+import sys
+
+repo_root, port, host, tcp_port, include_all = sys.argv[1:6]
+sys.path.insert(0, repo_root)
+sys.path.insert(0, f"{repo_root}/tools")
+
+from _meshtastic_common import connect_interface_for_target, resolve_meshtastic_target
+from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
+
+
+target = resolve_meshtastic_target(port=port, host=host, tcp_port=int(tcp_port))
+iface = connect_interface_for_target(
+    target,
+    serial_factory=SerialInterface,
+    tcp_factory=TCPInterface,
+    serial_connect_now=False,
+    tcp_connect_now=True,
+)
+try:
+    if target.mode != "tcp":
+        iface.connect()
+    local_node = getattr(iface, "localNode", None)
+    if local_node is None or not hasattr(local_node, "getURL"):
+        raise SystemExit("Connected interface does not expose localNode.getURL()")
+    print(local_node.getURL(includeAll=bool(int(include_all))))
+finally:
+    iface.close()
+PY
+}
+
 get_pref() {
   local field="${1:-}"
 
@@ -1799,6 +1855,14 @@ channels() {
       shift || true
       status channels "$@"
       ;;
+    url)
+      shift || true
+      if [[ $# -gt 1 ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels url [all|primary]" >&2
+        exit 1
+      fi
+      channel_url "${1:-all}"
+      ;;
     add)
       shift
       name="${1:-}"
@@ -1853,6 +1917,7 @@ channels() {
         echo "Usage: setup/meshtastic-python.sh channels set-url <URL>" >&2
         exit 1
       fi
+      url="$(normalize_channel_url "${url}")"
       run_meshtastic_cli --ch-set-url "${url}"
       ;;
     add-url)
@@ -1862,6 +1927,7 @@ channels() {
         echo "Usage: setup/meshtastic-python.sh channels add-url <URL>" >&2
         exit 1
       fi
+      url="$(normalize_channel_url "${url}")"
       run_meshtastic_cli --ch-add-url "${url}"
       ;;
     qr)
@@ -1885,7 +1951,7 @@ channels() {
       run_meshtastic_cli --qr-all
       ;;
     *)
-      echo "Usage: setup/meshtastic-python.sh channels {list|add|delete|enable|disable|set|set-url|add-url|qr|qr-all} ..." >&2
+      echo "Usage: setup/meshtastic-python.sh channels {list|url|add|delete|enable|disable|set|set-url|add-url|qr|qr-all} ..." >&2
       exit 1
       ;;
   esac

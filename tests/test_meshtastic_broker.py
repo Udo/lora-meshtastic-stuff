@@ -504,6 +504,23 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(snapshot["observed_admin_responses"], 0)
         self.assertEqual(snapshot["control_owner"], "127.0.0.1:5001")
 
+    def test_malformed_radio_prefix_bytes_are_counted_and_dropped(self) -> None:
+        observed = self.broker.observe_radio_bytes(b"garbage" + make_fromradio_text_frame(b"ok"))
+        snapshot = self.broker.snapshot()
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(snapshot["dropped_radio_bytes"], len(b"garbage"))
+        self.assertEqual(snapshot["invalid_radio_frames"], 0)
+
+    def test_undecodable_radio_frame_is_counted_and_dropped(self) -> None:
+        bad_frame = bytes([0x94, 0xC3, 0x00, 0x03]) + b"\xff\xfe\xfd"
+
+        observed = self.broker.observe_radio_bytes(bad_frame)
+        snapshot = self.broker.snapshot()
+
+        self.assertEqual(observed, [])
+        self.assertEqual(snapshot["invalid_radio_frames"], 1)
+
     def test_unconfirmed_control_owner_expires_and_next_writer_can_claim(self) -> None:
         self.broker.handle_client_bytes("client-a", make_admin_write_frame())
 
@@ -596,7 +613,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
     def test_proxy_arbitrates_control_writes_and_broadcasts_serial_data(self) -> None:
         owner_frame = make_admin_write_frame()
         denied_frame = make_admin_write_frame()
-        radio_chunk = b"radio-broadcast\n"
+        radio_chunk = make_fromradio_text_frame(b"radio-broadcast")
 
         with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client_a:
             with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client_b:
@@ -721,6 +738,47 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
                 received = client.recv(1024)
 
         self.assertEqual(received, make_fromradio_text_frame(b"still-broadcast"))
+        self.assertIn("plugin handler failed", "\n".join(logs.output))
+
+    def test_proxy_drops_malformed_radio_bytes_without_poisoning_clients(self) -> None:
+        valid_frame = make_fromradio_text_frame(b"healthy")
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            with self.assertLogs("meshtastic_proxy", level="WARNING") as logs:
+                self.fake_serial.inject_read(b"garbage" + valid_frame)
+                received = client.recv(1024)
+
+        self.assertEqual(received, valid_frame)
+        self.assertIn("dropping 7 malformed radio byte(s)", "\n".join(logs.output))
+        wait_until(lambda: self.read_status().get("dropped_radio_bytes") == 7)
+        status = self.read_status()
+        self.assertEqual(status["dropped_radio_bytes"], 7)
+
+    def test_plugin_tick_errors_are_logged_and_do_not_stop_tick_loop(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "tick-after-error.txt"
+        plugin_path = self.plugins_dir / "256.handler.py"
+        plugin_path.write_text(
+            "state = {'count': 0}\n"
+            "def tick(event, api):\n"
+            "    state['count'] += 1\n"
+            "    if state['count'] == 1:\n"
+            "        raise RuntimeError('tick boom')\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('tick\\n')\n",
+            encoding="utf-8",
+        )
+
+        tick_thread = threading.Thread(target=self.proxy.plugin_tick_loop, daemon=True)
+        with self.assertLogs("meshtastic_proxy", level="ERROR") as logs:
+            tick_thread.start()
+            try:
+                wait_until(lambda: output_file.exists() and output_file.read_text(encoding='utf-8').strip() == 'tick')
+            finally:
+                self.proxy.stop_event.set()
+                tick_thread.join(timeout=1.0)
+
+        self.assertFalse(tick_thread.is_alive())
         self.assertIn("plugin handler failed", "\n".join(logs.output))
 
     def test_plugin_tick_runs_periodically(self) -> None:

@@ -805,29 +805,41 @@ class MeshtasticProxy:
     def _handle_radio_plugins(self, observed_frames) -> None:
         api = self.build_plugin_api()
         for observed in observed_frames:
-            packet = observed.message.packet if observed.message.HasField("packet") else None
-            portnum, portnum_name = self._packet_portnum(packet)
-            if portnum is None:
-                continue
-            self._remember_node_short_name(packet, portnum_name)
-            self._remember_admin_state(packet, portnum_name)
-            event = {
-                "event_type": "packet",
-                "direction": "radio_to_clients",
-                "frame": observed.frame,
-                "message": observed.message,
-                "mesh_packet": packet,
-                "payload": bytes(packet.decoded.payload),
-                "packet_channel": int(getattr(packet, "channel", 0)),
-                "portnum": portnum,
-                "portnum_name": portnum_name,
-                "plugin_origin_likely": self._is_recent_plugin_send(portnum, bytes(packet.decoded.payload), int(getattr(packet, "to", 0))),
-                "ts": time.time(),
-            }
-            event.update(self._message_metadata(observed.message, packet, "radio_to_clients"))
-            self.plugins.dispatch_packet(portnum_name, portnum, event, api)
-            self._dispatch_channel_plugins(event, api)
-            self._dispatch_dm_plugins(event, api)
+            try:
+                packet = observed.message.packet if observed.message.HasField("packet") else None
+                portnum, portnum_name = self._packet_portnum(packet)
+                if portnum is None:
+                    continue
+                self._remember_node_short_name(packet, portnum_name)
+                self._remember_admin_state(packet, portnum_name)
+                event = {
+                    "event_type": "packet",
+                    "direction": "radio_to_clients",
+                    "frame": observed.frame,
+                    "message": observed.message,
+                    "mesh_packet": packet,
+                    "payload": bytes(packet.decoded.payload),
+                    "packet_channel": int(getattr(packet, "channel", 0)),
+                    "portnum": portnum,
+                    "portnum_name": portnum_name,
+                    "plugin_origin_likely": self._is_recent_plugin_send(portnum, bytes(packet.decoded.payload), int(getattr(packet, "to", 0))),
+                    "ts": time.time(),
+                }
+                event.update(self._message_metadata(observed.message, packet, "radio_to_clients"))
+                self.plugins.dispatch_packet(portnum_name, portnum, event, api)
+                self._dispatch_channel_plugins(event, api)
+                self._dispatch_dm_plugins(event, api)
+            except Exception:
+                LOGGER.exception("unexpected radio packet handling failure")
+
+    def _broadcast_observed_frames(self, observed_frames) -> None:
+        if not observed_frames:
+            return
+        for observed in observed_frames:
+            try:
+                self.broadcast(observed.frame)
+            except Exception:
+                LOGGER.exception("unexpected radio frame broadcast failure")
 
     def _handle_client_plugins(self, client: ClientConnection, forwarded_frames: list[bytes]) -> list[bytes]:
         if not forwarded_frames:
@@ -868,8 +880,11 @@ class MeshtasticProxy:
 
     def plugin_tick_loop(self) -> None:
         while not self.stop_event.wait(self.tick_interval):
-            self._refresh_local_metadata()
-            self.plugins.tick(self.build_plugin_api())
+            try:
+                self._refresh_local_metadata()
+                self.plugins.tick(self.build_plugin_api())
+            except Exception:
+                LOGGER.exception("unexpected plugin tick failure")
 
     def serial_reader_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -887,10 +902,14 @@ class MeshtasticProxy:
                     self._refresh_local_metadata()
                     chunk = handle.read(512)
                     if chunk:
-                        observed_frames = self.broker.observe_radio_bytes(chunk)
+                        try:
+                            observed_frames = self.broker.observe_radio_bytes(chunk)
+                        except Exception:
+                            LOGGER.exception("unexpected radio parse failure; dropping serial chunk")
+                            observed_frames = []
                         self.write_status()
                         self._handle_radio_plugins(observed_frames)
-                        self.broadcast(chunk)
+                        self._broadcast_observed_frames(observed_frames)
             except (SerialException, OSError) as exc:
                 LOGGER.warning("serial read failed: %s", exc)
             except Exception as exc:  # pragma: no cover - defensive recovery for pyserial edge cases
@@ -932,6 +951,8 @@ class MeshtasticProxy:
                     self.write_serial(serial_chunk)
         except (OSError, SerialException) as exc:
             LOGGER.debug("client forwarding stopped for %s:%s: %s", client.address[0], client.address[1], exc)
+        except Exception:
+            LOGGER.exception("unexpected client forwarding failure for %s:%s", client.address[0], client.address[1])
         finally:
             self.drop_client(client)
 
@@ -947,10 +968,17 @@ class MeshtasticProxy:
                     LOGGER.exception("accept loop failed")
                 break
 
-            self.configure_client_socket(sock)
-            client = self.register_client(sock, address)
-            thread = threading.Thread(target=self.client_reader_loop, args=(client,), daemon=True)
-            thread.start()
+            try:
+                self.configure_client_socket(sock)
+                client = self.register_client(sock, address)
+                thread = threading.Thread(target=self.client_reader_loop, args=(client,), daemon=True)
+                thread.start()
+            except Exception:
+                LOGGER.exception("failed to initialize client connection for %s:%s", address[0], address[1])
+                try:
+                    sock.close()
+                except OSError:
+                    pass
 
     def stop(self, _signum=None, _frame=None) -> None:
         self.stop_event.set()

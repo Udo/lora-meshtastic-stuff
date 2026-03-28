@@ -157,6 +157,8 @@ class MeshtasticBroker:
         self.denied_control_frames = 0
         self.forwarded_control_frames = 0
         self.observed_admin_responses = 0
+        self.dropped_radio_bytes = 0
+        self.invalid_radio_frames = 0
         self.last_session_passkey = ""
         self.last_session_passkey_seen_at: float | None = None
         self.last_admin_response_owner: str | None = None
@@ -194,11 +196,21 @@ class MeshtasticBroker:
         self._expire_control_owner_if_needed()
         parsed = self.radio_parser.feed(data)
         observed: list[ObservedRadioFrame] = []
+        if parsed.raw_chunks:
+            dropped_len = sum(len(chunk) for chunk in parsed.raw_chunks)
+            self.dropped_radio_bytes += dropped_len
+            sample = parsed.raw_chunks[0][:24].hex()
+            self.logger.warning(
+                "dropping %s malformed radio byte(s) before frame sync; sample=%s",
+                dropped_len,
+                sample,
+            )
         for frame in parsed.frames:
             try:
                 message = decode_fromradio_frame(frame)
             except Exception as exc:
-                self.logger.debug("ignoring undecodable radio frame: %s", exc)
+                self.invalid_radio_frames += 1
+                self.logger.warning("dropping undecodable radio frame: %s", exc)
                 continue
             self._observe_fromradio(message)
             observed.append(ObservedRadioFrame(frame=frame, message=message))
@@ -277,7 +289,9 @@ class MeshtasticBroker:
             "control_session_confirmed": self.control_owner_confirmed,
             "control_session_expires_in": expires_in,
             "denied_control_frames": self.denied_control_frames,
+            "dropped_radio_bytes": self.dropped_radio_bytes,
             "forwarded_control_frames": self.forwarded_control_frames,
+            "invalid_radio_frames": self.invalid_radio_frames,
             "observed_admin_responses": self.observed_admin_responses,
             "last_session_passkey": self.last_session_passkey or None,
             "last_admin_response_owner": self.last_admin_response_owner,

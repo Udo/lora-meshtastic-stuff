@@ -103,12 +103,15 @@ Channel management examples:
 
 ```bash
 ./setup/meshtastic-python.sh channels list
+./setup/meshtastic-python.sh channels url
 ./setup/meshtastic-python.sh channels add Friends
 ./setup/meshtastic-python.sh channels set 1 psk random
 ./setup/meshtastic-python.sh channels delete 1
 ./setup/meshtastic-python.sh channels qr
 ./setup/meshtastic-python.sh channels qr-all
 ```
+
+Use `channels url` when you want a single-line share URL suitable for piping or copy/paste. The `add-url` and `set-url` actions now strip embedded whitespace so wrapped Meshtastic URLs pasted from terminals or YAML exports still import cleanly.
 
 The status tool also exposes the configured channel list:
 

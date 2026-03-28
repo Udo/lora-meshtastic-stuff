@@ -331,6 +331,28 @@ channels add Friends
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "cli:--ch-add Friends\n")
 
+    def test_channels_url_defaults_to_all_scope(self) -> None:
+        result = run_wrapper_snippet(
+            """
+channel_url() { printf 'url:%s\n' "$1"; }
+channels url
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "url:all\n")
+
+    def test_channels_url_accepts_primary_scope(self) -> None:
+        result = run_wrapper_snippet(
+            """
+channel_url() { printf 'url:%s\n' "$1"; }
+channels url primary
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "url:primary\n")
+
     def test_channels_set_forwards_index_and_field(self) -> None:
         result = run_wrapper_snippet(
             """
@@ -341,6 +363,28 @@ channels set 1 psk random
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "cli:--ch-index 1 --ch-set psk random\n")
+
+    def test_channels_add_url_strips_embedded_whitespace(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+channels add-url $'https://meshtastic.org/e/#ABC\n DEF\tGHI'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--ch-add-url https://meshtastic.org/e/#ABCDEFGHI\n")
+
+    def test_channels_set_url_strips_embedded_whitespace(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+channels set-url $'https://meshtastic.org/e/#ABC\r\nDEF GHI'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--ch-set-url https://meshtastic.org/e/#ABCDEFGHI\n")
 
     def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
         result = run_wrapper_snippet(
