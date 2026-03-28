@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -9,6 +10,8 @@ from meshtastic.stream_interface import HEADER_LEN, MAX_TO_FROM_RADIO_SIZE, STAR
 LOGGER = logging.getLogger("meshtastic_broker")
 PROVISIONAL_CONTROL_LEASE_SECONDS = 10.0
 ADMIN_SESSION_LEASE_SECONDS = 300.0
+MALFORMED_RADIO_LOG_INTERVAL_SECONDS = 5.0
+ANSI_ESCAPE_RE = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 
 
 @dataclass
@@ -162,6 +165,66 @@ class MeshtasticBroker:
         self.last_session_passkey = ""
         self.last_session_passkey_seen_at: float | None = None
         self.last_admin_response_owner: str | None = None
+        self._last_malformed_radio_log_at = float("-inf")
+        self._suppressed_malformed_radio_chunks = 0
+        self._suppressed_malformed_radio_bytes = 0
+        self._suppressed_malformed_radio_text_bytes = 0
+
+    def _looks_like_text_console_noise(self, data: bytes) -> bool:
+        if not data:
+            return False
+        stripped = ANSI_ESCAPE_RE.sub(b"", data)
+        if not stripped:
+            return False
+        printable = sum(1 for byte in stripped if byte in b"\r\n\t" or 32 <= byte <= 126)
+        return printable >= max(8, int(len(stripped) * 0.75))
+
+    def _raw_chunk_sample_text(self, data: bytes) -> str:
+        stripped = ANSI_ESCAPE_RE.sub(b"", data).strip()
+        if not stripped:
+            return ""
+        sample = stripped[:80].decode("utf-8", errors="replace")
+        return " ".join(sample.split())
+
+    def _log_malformed_radio_chunks(self, raw_chunks: list[bytes]) -> None:
+        dropped_len = sum(len(chunk) for chunk in raw_chunks)
+        if dropped_len <= 0:
+            return
+
+        text_like = any(self._looks_like_text_console_noise(chunk) for chunk in raw_chunks)
+        now = self.clock()
+        if now - self._last_malformed_radio_log_at < MALFORMED_RADIO_LOG_INTERVAL_SECONDS:
+            self._suppressed_malformed_radio_chunks += len(raw_chunks)
+            self._suppressed_malformed_radio_bytes += dropped_len
+            if text_like:
+                self._suppressed_malformed_radio_text_bytes += dropped_len
+            return
+
+        suppressed_chunks = self._suppressed_malformed_radio_chunks
+        suppressed_bytes = self._suppressed_malformed_radio_bytes
+        suppressed_text_bytes = self._suppressed_malformed_radio_text_bytes
+        self._suppressed_malformed_radio_chunks = 0
+        self._suppressed_malformed_radio_bytes = 0
+        self._suppressed_malformed_radio_text_bytes = 0
+        self._last_malformed_radio_log_at = now
+
+        if text_like:
+            sample_text = self._raw_chunk_sample_text(raw_chunks[0]) or raw_chunks[0][:24].hex()
+            message = "dropping %s non-protocol serial byte(s) before frame sync; sample_text=%r"
+            args: tuple[object, ...] = (dropped_len, sample_text)
+            if suppressed_bytes:
+                suffix = f", mostly text/debug output ({suppressed_text_bytes} byte(s))" if suppressed_text_bytes else ""
+                message += "; suppressed %s similar chunk(s) totaling %s byte(s)%s"
+                args += (suppressed_chunks, suppressed_bytes, suffix)
+            self.logger.warning(message, *args)
+            return
+
+        message = "dropping %s malformed radio byte(s) before frame sync; sample=%s"
+        args = (dropped_len, raw_chunks[0][:24].hex())
+        if suppressed_bytes:
+            message += "; suppressed %s similar chunk(s) totaling %s byte(s)"
+            args += (suppressed_chunks, suppressed_bytes)
+        self.logger.warning(message, *args)
 
     def register_client(self, client_id: str, label: str) -> None:
         self.clients[client_id] = BrokerClientState(label=label)
@@ -199,12 +262,7 @@ class MeshtasticBroker:
         if parsed.raw_chunks:
             dropped_len = sum(len(chunk) for chunk in parsed.raw_chunks)
             self.dropped_radio_bytes += dropped_len
-            sample = parsed.raw_chunks[0][:24].hex()
-            self.logger.warning(
-                "dropping %s malformed radio byte(s) before frame sync; sample=%s",
-                dropped_len,
-                sample,
-            )
+            self._log_malformed_radio_chunks(parsed.raw_chunks)
         for frame in parsed.frames:
             try:
                 message = decode_fromradio_frame(frame)

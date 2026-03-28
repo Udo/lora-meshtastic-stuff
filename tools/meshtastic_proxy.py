@@ -1029,6 +1029,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def maybe_add_syslog_handler() -> None:
+    if os.environ.get("JOURNAL_STREAM") or os.environ.get("INVOCATION_ID"):
+        return
     if not os.path.exists("/dev/log"):
         return
     root_logger = logging.getLogger()

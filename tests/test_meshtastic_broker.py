@@ -1,4 +1,5 @@
 import json
+import logging
 import pathlib
 import queue
 import shutil
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -20,7 +22,7 @@ if str(TOOLS_DIR) not in sys.path:
 from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 
 from tools.meshtastic_broker import FrameParser, MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
-from tools.meshtastic_proxy import MeshtasticProxy
+from tools.meshtastic_proxy import MeshtasticProxy, maybe_add_syslog_handler
 
 
 class FakeClock:
@@ -512,6 +514,24 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(snapshot["dropped_radio_bytes"], len(b"garbage"))
         self.assertEqual(snapshot["invalid_radio_frames"], 0)
 
+    def test_textual_radio_noise_is_labeled_as_non_protocol_and_rate_limited(self) -> None:
+        noise = b"\x1b[34mDEBUG\x1b[0m | SerialConsole FromRadio=START\n"
+
+        with self.assertLogs("meshtastic_broker", level="WARNING") as logs:
+            self.broker.observe_radio_bytes(noise)
+            self.clock.advance(1.0)
+            self.broker.observe_radio_bytes(noise)
+
+        combined = "\n".join(logs.output)
+        self.assertIn("non-protocol serial byte(s)", combined)
+        self.assertEqual(combined.count("non-protocol serial byte(s)"), 1)
+
+        self.clock.advance(5.0)
+        with self.assertLogs("meshtastic_broker", level="WARNING") as later_logs:
+            self.broker.observe_radio_bytes(noise)
+
+        self.assertIn("suppressed 1 similar chunk(s)", "\n".join(later_logs.output))
+
     def test_undecodable_radio_frame_is_counted_and_dropped(self) -> None:
         bad_frame = bytes([0x94, 0xC3, 0x00, 0x03]) + b"\xff\xfe\xfd"
 
@@ -780,7 +800,6 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
         self.assertFalse(tick_thread.is_alive())
         self.assertIn("plugin handler failed", "\n".join(logs.output))
-
     def test_plugin_tick_runs_periodically(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "tick-output.txt"
         plugin_path = self.plugins_dir / "256.handler.py"
@@ -1492,6 +1511,20 @@ class StoreForwardPluginTests(unittest.TestCase):
         response.ParseFromString(frame.packet.decoded.payload)
         self.assertEqual(response.stats.messages_total, 0)
         self.assertIn("skipped malformed", "\n".join(logs.output))
+
+
+class MeshtasticProxyLoggingTests(unittest.TestCase):
+    def test_syslog_handler_is_skipped_under_journald(self) -> None:
+        root_logger = logging.getLogger("meshtastic_proxy_syslog_test")
+        previous_handlers = list(root_logger.handlers)
+        root_logger.handlers = []
+        try:
+            with mock.patch.dict("os.environ", {"JOURNAL_STREAM": "9:9"}, clear=False):
+                with mock.patch("tools.meshtastic_proxy.logging.getLogger", return_value=root_logger):
+                    maybe_add_syslog_handler()
+            self.assertEqual(root_logger.handlers, [])
+        finally:
+            root_logger.handlers = previous_handlers
 
 
 if __name__ == "__main__":
