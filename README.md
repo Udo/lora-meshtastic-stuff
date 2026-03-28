@@ -174,6 +174,8 @@ If you leave the WiFi SSID or password blank in guided mode, WiFi setup is skipp
 
 The repo-local pretty status tool lives at [tools/meshtastic_status.py](tools/meshtastic_status.py) and can be called directly or through the setup script wrapper.
 
+For a primer on the main Meshtastic application protocols used throughout this repo, see [docs/meshtastic_protocols.md](docs/meshtastic_protocols.md).
+
 After `./setup/meshtastic-python.sh bootstrap`, direct invocation works too:
 
 ```bash

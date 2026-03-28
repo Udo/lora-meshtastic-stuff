@@ -17,6 +17,7 @@
 
 ## Function
 
+- For a primer on the main Meshtastic application protocols and app ports, see [meshtastic_protocols.md](./meshtastic_protocols.md).
 - `meshtastic_status.py` is the read-oriented inspection tool for summary, config, nodes, and a few Meshtastic CLI passthrough operations.
 - The wrapper-level `telemetry` command uses `meshtastic_status.py telemetry` for either active polling or cached telemetry display, with direct neighbors preferred over multihop nodes.
 - `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.
