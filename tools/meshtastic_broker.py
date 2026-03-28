@@ -218,6 +218,12 @@ class BrokerDecision:
     forwarded_frames: list[bytes] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ForwardDecision:
+    action: str
+    reason: str | None = None
+
+
 @dataclass
 class BrokerClientState:
     label: str
@@ -375,10 +381,11 @@ class MeshtasticBroker:
         decision = BrokerDecision(serial_chunks=list(parsed.raw_chunks))
 
         for frame in parsed.frames:
-            if self._should_forward_frame(client_id, frame):
+            forward = self._should_forward_frame(client_id, frame)
+            if forward.action == "forward":
                 decision.serial_chunks.append(frame)
                 decision.forwarded_frames.append(frame)
-            else:
+            elif forward.action == "deny":
                 owner_label = self._owner_label()
                 decision.direct_chunks.append(control_denied_message(owner_label))
 
@@ -432,26 +439,26 @@ class MeshtasticBroker:
         elif self.control_owner_id is not None and self.control_owner_confirmed:
             self.control_owner_expires_at = self.clock() + self.admin_session_timeout
 
-    def _should_forward_frame(self, client_id: str, frame: bytes) -> bool:
+    def _should_forward_frame(self, client_id: str, frame: bytes) -> ForwardDecision:
         self._expire_control_owner_if_needed()
         self._expire_host_session_owner_if_needed()
         try:
             message = decode_toradio_frame(frame)
         except Exception as exc:
             self.logger.debug("allowing undecodable frame from %s: %s", client_id, exc)
-            return True
+            return ForwardDecision("forward")
 
         variant = message.WhichOneof("payload_variant")
         if variant == "want_config_id":
             self._claim_host_session_owner(client_id)
             self.logger.info("host session claimed by %s via want_config_id", self._client_label(client_id))
-            return True
+            return ForwardDecision("forward")
 
         if variant in {"heartbeat", "disconnect"}:
             if self.host_session_owner_id is None:
                 self._claim_host_session_owner(client_id)
                 self.logger.info("host session claimed by %s via %s", self._client_label(client_id), variant)
-                return True
+                return ForwardDecision("forward")
             if self.host_session_owner_id != client_id:
                 self.logger.debug(
                     "suppressing host-session %s from %s while owned by %s",
@@ -459,22 +466,22 @@ class MeshtasticBroker:
                     self._client_label(client_id),
                     self._host_session_owner_label(),
                 )
-                return False
+                return ForwardDecision("consume")
             if variant == "disconnect":
                 self.logger.info("host session released by %s", self._client_label(client_id))
                 self._clear_host_session_owner()
-                return True
+                return ForwardDecision("forward")
             self._refresh_host_session_owner_lease()
-            return True
+            return ForwardDecision("forward")
 
         if not is_control_request(message):
-            return True
+            return ForwardDecision("forward")
 
         if self.control_owner_id is None:
             self._claim_control_owner(client_id)
             self.forwarded_control_frames += 1
             self.logger.info("control session claimed by %s", self._client_label(client_id))
-            return True
+            return ForwardDecision("forward")
 
         if self.control_owner_id != client_id:
             self.denied_control_frames += 1
@@ -483,17 +490,17 @@ class MeshtasticBroker:
                 self._client_label(client_id),
                 self._owner_label(),
             )
-            return False
+            return ForwardDecision("deny")
 
         self.forwarded_control_frames += 1
         if message.WhichOneof("payload_variant") == "disconnect":
             self.logger.info("control session released by %s", self._client_label(client_id))
             self._clear_control_owner()
-            return True
+            return ForwardDecision("forward")
 
         self._refresh_control_owner_lease()
 
-        return True
+        return ForwardDecision("forward")
 
     def snapshot(self) -> dict[str, object]:
         self._expire_control_owner_if_needed()
