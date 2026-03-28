@@ -907,7 +907,7 @@ class MeshtasticProxy:
                         except Exception:
                             LOGGER.exception("unexpected radio parse failure; dropping serial chunk")
                             observed_frames = []
-                        self.write_status()
+                        self.write_status(force=True)
                         self._handle_radio_plugins(observed_frames)
                         self._broadcast_observed_frames(observed_frames)
             except (SerialException, OSError) as exc:

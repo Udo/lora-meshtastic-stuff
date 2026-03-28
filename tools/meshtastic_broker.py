@@ -14,15 +14,66 @@ MALFORMED_RADIO_LOG_INTERVAL_SECONDS = 5.0
 ANSI_ESCAPE_RE = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 
 
+def strip_ansi_escape_sequences(data: bytes) -> bytes:
+    return ANSI_ESCAPE_RE.sub(b"", data)
+
+
+def looks_like_text_console_noise(data: bytes) -> bool:
+    if not data:
+        return False
+    stripped = strip_ansi_escape_sequences(data)
+    if not stripped:
+        return False
+    printable = sum(1 for byte in stripped if byte in b"\r\n\t" or 32 <= byte <= 126)
+    alpha = sum(1 for byte in stripped if 65 <= byte <= 90 or 97 <= byte <= 122)
+    return printable >= max(8, int(len(stripped) * 0.85)) and alpha >= 3
+
+
+def raw_chunk_sample_text(data: bytes) -> str:
+    stripped = strip_ansi_escape_sequences(data).strip()
+    if not stripped:
+        return ""
+    sample = stripped[:80].decode("utf-8", errors="replace")
+    return " ".join(sample.split())
+
+
 @dataclass
 class ParseResult:
+    text_chunks: list[bytes] = field(default_factory=list)
     raw_chunks: list[bytes] = field(default_factory=list)
     frames: list[bytes] = field(default_factory=list)
 
 
 class FrameParser:
-    def __init__(self) -> None:
+    def __init__(self, *, strip_text_prefix: bool = False) -> None:
         self._buffer = bytearray()
+        self.strip_text_prefix = strip_text_prefix
+
+    def _extract_text_prefix(self, buf: bytearray, pos: int) -> tuple[bytes | None, int, bool]:
+        if not self.strip_text_prefix or buf[pos] == START1:
+            return None, pos, False
+
+        next_start = buf.find(bytes([START1]), pos)
+        line_end_candidates = [index for index in (buf.find(b"\n", pos), buf.find(b"\r", pos)) if index != -1]
+        next_line_end = min(line_end_candidates) if line_end_candidates else -1
+
+        if next_line_end != -1 and (next_start == -1 or next_line_end < next_start):
+            end = next_line_end + 1
+            candidate = bytes(buf[pos:end])
+            if looks_like_text_console_noise(candidate):
+                return candidate, end, False
+            return None, pos, False
+
+        if next_start != -1 and next_start > pos:
+            candidate = bytes(buf[pos:next_start])
+            if looks_like_text_console_noise(candidate):
+                return candidate, next_start, False
+            return None, pos, False
+
+        candidate = bytes(buf[pos:])
+        if looks_like_text_console_noise(candidate):
+            return None, pos, True
+        return None, pos, False
 
     def feed(self, data: bytes) -> ParseResult:
         result = ParseResult()
@@ -38,6 +89,15 @@ class FrameParser:
         pos = 0
 
         while pos < len(buf):
+            text_chunk, new_pos, wait_for_more = self._extract_text_prefix(buf, pos)
+            if wait_for_more:
+                break
+            if text_chunk is not None:
+                flush_raw()
+                result.text_chunks.append(text_chunk)
+                pos = new_pos
+                continue
+
             if buf[pos] != START1:
                 raw_buffer.append(buf[pos])
                 pos += 1
@@ -156,7 +216,7 @@ class MeshtasticBroker:
         self.control_owner_id: str | None = None
         self.control_owner_confirmed = False
         self.control_owner_expires_at: float | None = None
-        self.radio_parser = FrameParser()
+        self.radio_parser = FrameParser(strip_text_prefix=True)
         self.denied_control_frames = 0
         self.forwarded_control_frames = 0
         self.observed_admin_responses = 0
@@ -172,32 +232,6 @@ class MeshtasticBroker:
         self._last_serial_debug_log_at = float("-inf")
         self._suppressed_serial_debug_chunks = 0
         self._suppressed_serial_debug_bytes = 0
-
-    def _looks_like_text_console_noise(self, data: bytes) -> bool:
-        if not data:
-            return False
-        stripped = ANSI_ESCAPE_RE.sub(b"", data)
-        if not stripped:
-            return False
-        printable = sum(1 for byte in stripped if byte in b"\r\n\t" or 32 <= byte <= 126)
-        return printable >= max(8, int(len(stripped) * 0.75))
-
-    def _raw_chunk_sample_text(self, data: bytes) -> str:
-        stripped = ANSI_ESCAPE_RE.sub(b"", data).strip()
-        if not stripped:
-            return ""
-        sample = stripped[:80].decode("utf-8", errors="replace")
-        return " ".join(sample.split())
-
-    def _split_raw_radio_chunks(self, raw_chunks: list[bytes]) -> tuple[list[bytes], list[bytes]]:
-        serial_debug_chunks: list[bytes] = []
-        malformed_chunks: list[bytes] = []
-        for chunk in raw_chunks:
-            if self._looks_like_text_console_noise(chunk):
-                serial_debug_chunks.append(chunk)
-            else:
-                malformed_chunks.append(chunk)
-        return serial_debug_chunks, malformed_chunks
 
     def _log_serial_debug_chunks(self, raw_chunks: list[bytes]) -> None:
         ignored_len = sum(len(chunk) for chunk in raw_chunks)
@@ -216,7 +250,7 @@ class MeshtasticBroker:
         self._suppressed_serial_debug_bytes = 0
         self._last_serial_debug_log_at = now
 
-        sample_text = self._raw_chunk_sample_text(raw_chunks[0]) or raw_chunks[0][:24].hex()
+        sample_text = raw_chunk_sample_text(raw_chunks[0]) or raw_chunks[0][:24].hex()
         message = "ignored %s serial debug byte(s) before frame sync; sample_text=%r"
         args: tuple[object, ...] = (ignored_len, sample_text)
         if suppressed_bytes:
@@ -281,14 +315,12 @@ class MeshtasticBroker:
         self._expire_control_owner_if_needed()
         parsed = self.radio_parser.feed(data)
         observed: list[ObservedRadioFrame] = []
+        if parsed.text_chunks:
+            self.ignored_serial_debug_bytes += sum(len(chunk) for chunk in parsed.text_chunks)
+            self._log_serial_debug_chunks(parsed.text_chunks)
         if parsed.raw_chunks:
-            serial_debug_chunks, malformed_chunks = self._split_raw_radio_chunks(parsed.raw_chunks)
-            if serial_debug_chunks:
-                self.ignored_serial_debug_bytes += sum(len(chunk) for chunk in serial_debug_chunks)
-                self._log_serial_debug_chunks(serial_debug_chunks)
-            if malformed_chunks:
-                self.dropped_radio_bytes += sum(len(chunk) for chunk in malformed_chunks)
-                self._log_malformed_radio_chunks(malformed_chunks)
+            self.dropped_radio_bytes += sum(len(chunk) for chunk in parsed.raw_chunks)
+            self._log_malformed_radio_chunks(parsed.raw_chunks)
         for frame in parsed.frames:
             try:
                 message = decode_fromradio_frame(frame)

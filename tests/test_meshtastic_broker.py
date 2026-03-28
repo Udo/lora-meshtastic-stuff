@@ -395,6 +395,33 @@ class FrameParserTests(unittest.TestCase):
 
         self.assertEqual(result.frames, [frame])
 
+    def test_radio_parser_strips_console_text_before_frame_validation(self) -> None:
+        parser = FrameParser(strip_text_prefix=True)
+        noise = b"\x1b[34mDEBUG\x1b[0m | SerialConsole FromRadio=START\n"
+        frame = make_fromradio_text_frame(b"ok")
+
+        result = parser.feed(noise + frame)
+
+        self.assertEqual(result.text_chunks, [noise])
+        self.assertEqual(result.raw_chunks, [])
+        self.assertEqual(result.frames, [frame])
+
+    def test_radio_parser_keeps_partial_console_text_until_completed(self) -> None:
+        parser = FrameParser(strip_text_prefix=True)
+        part_one = b"DEBUG | SerialConsole partial"
+        part_two = b" line\n"
+        frame = make_fromradio_text_frame(b"ok")
+
+        first = parser.feed(part_one)
+        self.assertEqual(first.text_chunks, [])
+        self.assertEqual(first.raw_chunks, [])
+        self.assertEqual(first.frames, [])
+
+        second = parser.feed(part_two + frame)
+        self.assertEqual(second.text_chunks, [part_one + part_two])
+        self.assertEqual(second.raw_chunks, [])
+        self.assertEqual(second.frames, [frame])
+
 
 class MeshtasticBrokerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -523,7 +550,7 @@ class MeshtasticBrokerTests(unittest.TestCase):
             self.broker.observe_radio_bytes(noise)
 
         combined = "\n".join(logs.output)
-        self.assertIn("ignored 43 serial debug byte(s)", combined)
+        self.assertIn(f"ignored {len(noise)} serial debug byte(s)", combined)
         self.assertEqual(combined.count("serial debug byte(s)"), 1)
 
         snapshot = self.broker.snapshot()
@@ -788,7 +815,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             wait_until(lambda: self.read_status().get("ignored_serial_debug_bytes") == len(noise))
 
         combined = "\n".join(logs.output)
-        self.assertIn("ignored 43 serial debug byte(s)", combined)
+        self.assertIn(f"ignored {len(noise)} serial debug byte(s)", combined)
         status = self.read_status()
         self.assertEqual(status["ignored_serial_debug_bytes"], len(noise))
         self.assertEqual(status["dropped_radio_bytes"], 0)
