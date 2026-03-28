@@ -777,6 +777,63 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
             self.assertEqual(received, b"DEBUG | waiting for client protobuf\n")
 
+    def test_proxy_replaces_existing_clients_on_non_loopback_bind(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        fake_serial = FakeSerialHandle()
+        proxy = LoopbackMeshtasticProxy(
+            fake_serial=fake_serial,
+            serial_port="fake-serial",
+            baudrate=115200,
+            listen_host="0.0.0.0",
+            listen_port=0,
+            reconnect_delay=0.01,
+            status_file=str(pathlib.Path(temp_dir.name) / "proxy-status.json"),
+            config_file=self.config_file,
+            plugins_dir=str(self.plugins_dir),
+            tick_interval=0.05,
+        )
+        proxy.start_server()
+        port = proxy.server_socket.getsockname()[1]
+        serial_thread = threading.Thread(target=proxy.serial_reader_loop, daemon=True)
+        accept_thread = threading.Thread(target=proxy.accept_loop, daemon=True)
+        serial_thread.start()
+        accept_thread.start()
+
+        def read_status() -> dict[str, object]:
+            with open(temp_dir.name + "/proxy-status.json", encoding="utf-8") as handle:
+                return json.load(handle)
+
+        try:
+            wait_until(lambda: proxy.serial_ready.is_set())
+
+            with socket.create_connection(("127.0.0.1", port), timeout=1.0) as client_a:
+                client_a.settimeout(1.0)
+                wait_until(lambda: read_status().get("client_count") == 1)
+                client_a.sendall(make_want_config_frame(111))
+                wait_until(lambda: make_want_config_frame(111) in non_probe_writes(fake_serial.writes))
+
+                with socket.create_connection(("127.0.0.1", port), timeout=1.0) as client_b:
+                    client_b.settimeout(1.0)
+                    wait_until(lambda: read_status().get("client_count") == 1)
+                    client_b.sendall(make_want_config_frame(222))
+                    wait_until(lambda: non_probe_writes(fake_serial.writes)[-1] == make_want_config_frame(222))
+
+                    status = read_status()
+                    self.assertEqual(status["client_count"], 1)
+                    self.assertEqual(status["single_client_mode"], True)
+
+                closed = False
+                try:
+                    closed = client_a.recv(1) == b""
+                except OSError:
+                    closed = True
+                self.assertTrue(closed)
+        finally:
+            proxy.stop()
+            accept_thread.join(timeout=1.0)
+            serial_thread.join(timeout=1.0)
+            temp_dir.cleanup()
+
     def test_proxy_stops_mirroring_serial_debug_text_after_client_protocol_starts(self) -> None:
         with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
             client.settimeout(0.5)

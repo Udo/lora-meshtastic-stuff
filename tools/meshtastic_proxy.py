@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import ipaddress
 import json
 import logging
 import logging.handlers
@@ -54,6 +55,31 @@ LOCAL_ECHO_PORTNUMS = {
     int(portnums_pb2.TEXT_MESSAGE_APP),
     int(portnums_pb2.PRIVATE_APP),
 }
+LOOPBACK_BIND_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def is_loopback_bind_host(host: str) -> bool:
+    candidate = host.strip().strip("[]")
+    if not candidate:
+        return False
+    if candidate.lower() in LOOPBACK_BIND_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        try:
+            addresses = {
+                info[4][0].split("%", 1)[0]
+                for info in socket.getaddrinfo(candidate, None, type=socket.SOCK_STREAM)
+            }
+        except OSError:
+            return False
+        if not addresses:
+            return False
+        try:
+            return all(ipaddress.ip_address(address).is_loopback for address in addresses)
+        except ValueError:
+            return False
 
 
 @dataclass(eq=False)
@@ -95,6 +121,7 @@ class MeshtasticProxy:
         self.status_write_interval = status_write_interval
         self.runtime_dir = Path(status_file).resolve().parent if status_file else Path(__file__).resolve().parents[1] / ".runtime" / "meshtastic"
         self.plugin_state_dir = self.runtime_dir / "plugins"
+        self.single_client_mode = not is_loopback_bind_host(listen_host)
         self.stop_event = threading.Event()
         self.server_socket: socket.socket | None = None
         self.serial_handle = None
@@ -155,6 +182,7 @@ class MeshtasticProxy:
                 "serial_port": self.serial_port,
                 "serial_connected": self.serial_ready.is_set(),
                 "pid": os.getpid(),
+                "single_client_mode": self.single_client_mode,
             }
         )
         return snapshot
@@ -239,6 +267,20 @@ class MeshtasticProxy:
         LOGGER.info("client connected: %s:%s", address[0], address[1])
         self.write_status(force=True)
         return client
+
+    def replace_existing_clients(self, address: tuple[str, int]) -> None:
+        with self.clients_lock:
+            existing_clients = list(self.clients)
+        if not existing_clients:
+            return
+        LOGGER.info(
+            "closing %s existing client(s) before accepting %s:%s to mirror official TCP server semantics",
+            len(existing_clients),
+            address[0],
+            address[1],
+        )
+        for client in existing_clients:
+            self.drop_client(client)
 
     def drop_client(self, client: ClientConnection) -> None:
         with self.clients_lock:
@@ -1052,6 +1094,8 @@ class MeshtasticProxy:
 
             try:
                 self.configure_client_socket(sock)
+                if self.single_client_mode:
+                    self.replace_existing_clients(address)
                 client = self.register_client(sock, address)
                 thread = threading.Thread(target=self.client_reader_loop, args=(client,), daemon=True)
                 thread.start()
