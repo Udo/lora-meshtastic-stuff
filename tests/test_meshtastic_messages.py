@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import pathlib
 import sys
@@ -6,6 +8,8 @@ import threading
 import time
 import unittest
 from unittest import mock
+
+from meshtastic.mesh_interface import MeshInterface
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -170,6 +174,33 @@ class MeshtasticMessagesTests(unittest.TestCase):
             messages.portnums_pb2.PortNum.TEXT_MESSAGE_APP,
         )
         self.assertTrue(iface.closed)
+
+    def test_send_private_message_reports_connection_timeout_cleanly(self) -> None:
+        args = messages.build_parser().parse_args(
+            [
+                "--host",
+                "127.0.0.1",
+                "--tcp-port",
+                "4403",
+                "send",
+                "WO67",
+                "hello",
+                "--no-wait-for-ack",
+            ]
+        )
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            with mock.patch.object(
+                messages,
+                "connect_interface_for_target",
+                side_effect=MeshInterface.MeshInterfaceError("Timed out waiting for connection completion"),
+            ):
+                result = messages.send_private_message(args)
+
+        self.assertEqual(result, 1)
+        self.assertIn("Could not connect to 127.0.0.1:4403", stderr.getvalue())
+        self.assertIn("Timed out waiting for connection completion", stderr.getvalue())
 
     def test_lookup_identity_tolerates_missing_node_cache(self) -> None:
         iface = type("PartialInterface", (), {"nodes": None, "myInfo": None})()

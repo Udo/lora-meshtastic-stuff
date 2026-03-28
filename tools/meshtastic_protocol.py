@@ -33,6 +33,7 @@ from meshtastic_messages import (
 ensure_repo_python("MESHTASTIC_PROTOCOL_VENV_EXEC")
 
 try:
+    from meshtastic.mesh_interface import MeshInterface
     from meshtastic.serial_interface import SerialInterface
     from meshtastic.tcp_interface import TCPInterface
     from pubsub import pub
@@ -291,7 +292,7 @@ class ProtocolLogger:
                     serial_connect_now=False,
                     tcp_connect_now=True,
                 )
-            except (SerialException, OSError, socket.error) as exc:
+            except (SerialException, OSError, socket.error, MeshInterface.MeshInterfaceError) as exc:
                 print(connection_error_message(self.target, exc), file=sys.stderr)
                 return 1
 

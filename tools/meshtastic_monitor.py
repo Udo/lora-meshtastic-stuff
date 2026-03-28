@@ -29,6 +29,7 @@ ensure_repo_python("MESHTASTIC_MONITOR_VENV_EXEC")
 
 try:
     from pubsub import pub
+    from meshtastic.mesh_interface import MeshInterface
     from meshtastic.serial_interface import SerialInterface
     from meshtastic.tcp_interface import TCPInterface
     from serial.serialutil import SerialException
@@ -345,7 +346,7 @@ class Monitor:
                 self.log_handle = log_path.open("a", encoding="utf-8")
             try:
                 self.interface = self.connect_interface()
-            except (SerialException, OSError, socket.error) as exc:
+            except (SerialException, OSError, socket.error, MeshInterface.MeshInterfaceError) as exc:
                 print(connection_error_message(self.target, exc), file=sys.stderr)
                 return 1
             if self.target.mode != "tcp":

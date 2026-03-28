@@ -31,6 +31,7 @@ from _meshtastic_common import (
 ensure_repo_python("MESHTASTIC_MESSAGES_VENV_EXEC")
 
 try:
+    from meshtastic.mesh_interface import MeshInterface
     from meshtastic.protobuf import portnums_pb2
     from meshtastic.serial_interface import SerialInterface
     from meshtastic.tcp_interface import TCPInterface
@@ -593,7 +594,7 @@ class MessageSync:
                     serial_connect_now=False,
                     tcp_connect_now=True,
                 )
-            except (SerialException, OSError, socket.error) as exc:
+            except (SerialException, OSError, socket.error, MeshInterface.MeshInterfaceError) as exc:
                 print(connection_error_message(self.target, exc), file=sys.stderr)
                 return 1
             if self.target.mode != "tcp":
@@ -632,7 +633,7 @@ def send_private_message(args: argparse.Namespace) -> int:
             serial_connect_now=False,
             tcp_connect_now=True,
         )
-    except (SerialException, OSError, socket.error) as exc:
+    except (SerialException, OSError, socket.error, MeshInterface.MeshInterfaceError) as exc:
         print(connection_error_message(target, exc), file=sys.stderr)
         return 1
 

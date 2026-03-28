@@ -2,6 +2,7 @@
 .runtime/
 __pycache__/
 *.py[cod]
+data/bbs/users/
 docs/backup/
 console/contact/client.db
 console/contact/client.log
