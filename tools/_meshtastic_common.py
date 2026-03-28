@@ -4,7 +4,7 @@ import os
 import platform
 import socket
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -56,7 +56,12 @@ def default_serial_port() -> str:
 
 
 VENV_PYTHON = venv_python_path()
-DEFAULT_SERIAL_PORT = default_serial_port()
+
+
+def __getattr__(name: str):
+    if name == "DEFAULT_SERIAL_PORT":
+        return default_serial_port()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def ensure_repo_python(env_guard: str) -> None:
@@ -92,6 +97,27 @@ class Palette:
 
 def style(palette: Palette, color: str, text: str) -> str:
     return f"{color}{text}{palette.reset}"
+
+
+def strip_raw(obj):
+    if isinstance(obj, dict):
+        return {key: strip_raw(value) for key, value in obj.items() if key != "raw"}
+    if isinstance(obj, list):
+        return [strip_raw(item) for item in obj]
+    if isinstance(obj, bytes):
+        return f"<{len(obj)} bytes>"
+    return obj
+
+
+def iface_nodes(iface) -> dict[str, dict[str, object]]:
+    nodes = getattr(iface, "nodes", None)
+    return nodes if isinstance(nodes, dict) else {}
+
+
+def iface_local_node_num(iface) -> int | None:
+    my_info = getattr(iface, "myInfo", None)
+    node_num = getattr(my_info, "my_node_num", None)
+    return node_num if isinstance(node_num, int) else None
 
 
 def interface_target(interface: object) -> str:
@@ -158,7 +184,7 @@ def connection_error_message(target, exc: Exception) -> str:
 class MeshtasticTarget:
     mode: str
     source: str
-    serial_port: str = DEFAULT_SERIAL_PORT
+    serial_port: str = field(default_factory=default_serial_port)
     host: str = ""
     tcp_port: int = DEFAULT_TCP_PORT
 
@@ -170,7 +196,7 @@ class MeshtasticTarget:
 
 
 def env_serial_port() -> str:
-    return os.environ.get("MESHTASTIC_PORT", DEFAULT_SERIAL_PORT)
+    return os.environ.get("MESHTASTIC_PORT", default_serial_port())
 
 
 def env_tcp_port() -> int:

@@ -31,36 +31,41 @@ class FrameParser:
                 raw_buffer.clear()
 
         self._buffer.extend(data)
+        buf = self._buffer
+        pos = 0
 
-        while self._buffer:
-            if self._buffer[0] != START1:
-                raw_buffer.append(self._buffer.pop(0))
+        while pos < len(buf):
+            if buf[pos] != START1:
+                raw_buffer.append(buf[pos])
+                pos += 1
                 continue
 
-            if len(self._buffer) < 2:
+            if pos + 1 >= len(buf):
                 break
 
-            if self._buffer[1] != START2:
-                raw_buffer.append(self._buffer.pop(0))
+            if buf[pos + 1] != START2:
+                raw_buffer.append(buf[pos])
+                pos += 1
                 continue
 
-            if len(self._buffer) < HEADER_LEN:
+            if pos + HEADER_LEN > len(buf):
                 break
 
-            packet_len = (self._buffer[2] << 8) + self._buffer[3]
+            packet_len = (buf[pos + 2] << 8) + buf[pos + 3]
             if packet_len > MAX_TO_FROM_RADIO_SIZE:
                 LOGGER.debug("dropping oversize frame header with payload length %s", packet_len)
-                del self._buffer[0]
+                pos += 1
                 continue
 
             total_len = HEADER_LEN + packet_len
-            if len(self._buffer) < total_len:
+            if pos + total_len > len(buf):
                 break
 
             flush_raw()
-            result.frames.append(bytes(self._buffer[:total_len]))
-            del self._buffer[:total_len]
+            result.frames.append(bytes(buf[pos : pos + total_len]))
+            pos += total_len
 
+        del self._buffer[:pos]
         flush_raw()
         return result
 

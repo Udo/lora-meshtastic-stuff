@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from _meshtastic_common import DEFAULT_SERIAL_PORT, DEFAULT_TCP_HOST, DEFAULT_TCP_PORT, ensure_repo_python
 from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 from meshtastic_broker import MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
-from meshtastic_plugins import MeshtasticPluginManager
+from meshtastic_plugins import (
+    MeshtasticPluginManager,
+    plugin_storage_path,
+    plugin_store_append_jsonl,
+    plugin_store_read_jsonl,
+)
 
 ensure_repo_python("MESHTASTIC_PROXY_VENV_EXEC")
 
@@ -71,6 +76,7 @@ class MeshtasticProxy:
         config_file: str | None = None,
         plugins_dir: str | None = None,
         tick_interval: float = 1.0,
+        status_write_interval: float = 0.25,
     ) -> None:
         self.serial_port = serial_port
         self.baudrate = baudrate
@@ -81,6 +87,7 @@ class MeshtasticProxy:
         self.config_file = config_file
         self.plugins_dir = plugins_dir or str(Path(__file__).resolve().parents[1] / "plugins")
         self.tick_interval = tick_interval
+        self.status_write_interval = status_write_interval
         self.runtime_dir = Path(status_file).resolve().parent if status_file else Path(__file__).resolve().parents[1] / ".runtime" / "meshtastic"
         self.plugin_state_dir = self.runtime_dir / "plugins"
         self.stop_event = threading.Event()
@@ -100,6 +107,10 @@ class MeshtasticProxy:
         self._channel_names_by_num: dict[int, str] = {}
         self._channel_details_by_num: dict[int, dict[str, object]] = {}
         self._channel_refresh_due_at = 0.0
+        self._last_status_write_at = 0.0
+        self._proxy_config_cache: dict[str, str] | None = None
+        self._proxy_config_mtime_ns: int | None = None
+        self._plugin_loop_guard_last_cleanup = 0.0
 
     def configure_client_socket(self, sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -142,9 +153,13 @@ class MeshtasticProxy:
         )
         return snapshot
 
-    def write_status(self) -> None:
+    def write_status(self, *, force: bool = False) -> None:
         if not self.status_file:
             return
+        now = time.monotonic()
+        if not force and now - self._last_status_write_at < self.status_write_interval:
+            return
+        self._last_status_write_at = now
         try:
             os.makedirs(os.path.dirname(self.status_file), exist_ok=True)
             temp_file = f"{self.status_file}.tmp"
@@ -165,7 +180,7 @@ class MeshtasticProxy:
                     exclusive=True,
                 )
                 LOGGER.info("serial connected: %s @ %s", self.serial_port, self.baudrate)
-                self.write_status()
+                self.write_status(force=True)
                 return handle
             except (SerialException, OSError) as exc:
                 LOGGER.warning("serial open failed for %s: %s", self.serial_port, exc)
@@ -178,7 +193,7 @@ class MeshtasticProxy:
             handle = self.serial_handle
             self.serial_handle = None
             self.serial_ready.clear()
-        self.write_status()
+        self.write_status(force=True)
         if handle is not None:
             try:
                 handle.close()
@@ -193,7 +208,7 @@ class MeshtasticProxy:
         server.settimeout(0.5)
         self.server_socket = server
         LOGGER.info("listening on %s:%s", self.listen_host, self.listen_port)
-        self.write_status()
+        self.write_status(force=True)
 
     def stop_server(self) -> None:
         server = self.server_socket
@@ -203,7 +218,7 @@ class MeshtasticProxy:
                 server.close()
             except OSError:
                 pass
-        self.write_status()
+        self.write_status(force=True)
 
     def register_client(self, sock: socket.socket, address: tuple[str, int]) -> ClientConnection:
         self.client_counter += 1
@@ -216,7 +231,7 @@ class MeshtasticProxy:
             self.clients.add(client)
         self.broker.register_client(client.client_id, f"{address[0]}:{address[1]}")
         LOGGER.info("client connected: %s:%s", address[0], address[1])
-        self.write_status()
+        self.write_status(force=True)
         return client
 
     def drop_client(self, client: ClientConnection) -> None:
@@ -234,7 +249,7 @@ class MeshtasticProxy:
         except OSError:
             pass
         LOGGER.info("client disconnected: %s:%s", client.address[0], client.address[1])
-        self.write_status()
+        self.write_status(force=True)
 
     def broadcast(self, data: bytes) -> None:
         with self.clients_lock:
@@ -279,65 +294,29 @@ class MeshtasticProxy:
         return self.send_client(client_id, encode_frame(message.SerializeToString()))
 
     def _plugin_storage_path(self, plugin_name: str, relative_path: str) -> Path:
-        plugin_dir = self.plugin_state_dir / plugin_name
-        plugin_dir.mkdir(parents=True, exist_ok=True)
-        target = (plugin_dir / relative_path).resolve()
-        if plugin_dir.resolve() not in target.parents and target != plugin_dir.resolve():
-            raise ValueError(f"plugin storage path escapes plugin directory: {relative_path}")
-        return target
+        return plugin_storage_path(self.runtime_dir, plugin_name, relative_path)
 
     def plugin_store_append_jsonl(self, plugin_name: str, relative_path: str, record: dict[str, object]) -> str:
-        path = self._plugin_storage_path(plugin_name, relative_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True))
-            handle.write("\n")
-        return str(path)
+        return plugin_store_append_jsonl(self.runtime_dir, plugin_name, relative_path, record)
 
     def plugin_store_read_jsonl(self, plugin_name: str, relative_path: str, limit: int | None = None) -> list[dict[str, object]]:
-        path = self._plugin_storage_path(plugin_name, relative_path)
-        if not path.exists():
-            return []
-        records: list[dict[str, object]] = []
-        with open(path, encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    LOGGER.warning(
-                        "plugin storage skipped malformed jsonl line %s:%s: %s",
-                        path,
-                        line_number,
-                        exc,
-                    )
-                    continue
-                if not isinstance(record, dict):
-                    LOGGER.warning(
-                        "plugin storage skipped non-object jsonl record %s:%s",
-                        path,
-                        line_number,
-                    )
-                    continue
-                records.append(record)
-        if limit is not None and limit >= 0:
-            return records[-limit:]
-        return records
+        return plugin_store_read_jsonl(self.runtime_dir, plugin_name, relative_path, limit)
 
     def plugin_store_path(self, plugin_name: str, relative_path: str = "") -> str:
-        path = self._plugin_storage_path(plugin_name, relative_path or ".")
-        return str(path)
+        return str(plugin_storage_path(self.runtime_dir, plugin_name, relative_path))
 
     def _record_plugin_send(self, portnum: int, payload: bytes, destination: int | None) -> None:
         digest = hashlib.sha256(payload).hexdigest()
         key = f"{portnum}:{destination}:{digest}"
-        expires_at = time.time() + PLUGIN_LOOP_GUARD_TTL_SECONDS
+        now = time.time()
+        expires_at = now + PLUGIN_LOOP_GUARD_TTL_SECONDS
         with self._plugin_loop_guard_lock:
             self._plugin_loop_guard[key] = expires_at
-            expired = [existing for existing, expiry in self._plugin_loop_guard.items() if expiry < time.time()]
-            for existing in expired:
-                self._plugin_loop_guard.pop(existing, None)
+            if now - self._plugin_loop_guard_last_cleanup > PLUGIN_LOOP_GUARD_TTL_SECONDS:
+                expired = [k for k, v in self._plugin_loop_guard.items() if v < now]
+                for k in expired:
+                    self._plugin_loop_guard.pop(k, None)
+                self._plugin_loop_guard_last_cleanup = now
 
     def _is_recent_plugin_send(self, portnum: int | None, payload: bytes, destination: int | None) -> bool:
         if portnum is None:
@@ -459,8 +438,12 @@ class MeshtasticProxy:
         if not self.config_file:
             return {}
         path = Path(self.config_file)
-        if not path.exists():
+        try:
+            stat = path.stat()
+        except OSError:
             return {}
+        if self._proxy_config_cache is not None and self._proxy_config_mtime_ns == stat.st_mtime_ns:
+            return self._proxy_config_cache
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
@@ -478,9 +461,13 @@ class MeshtasticProxy:
                 continue
             key, value = line.split("=", 1)
             key = key.strip()
-            value = value.strip().strip("'").strip('"')
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
             if key:
                 values[key] = value
+        self._proxy_config_cache = values
+        self._proxy_config_mtime_ns = stat.st_mtime_ns
         return values
 
     def _config_flag(self, *keys: str, default: bool = False) -> bool:
@@ -925,7 +912,7 @@ class MeshtasticProxy:
                 if not data:
                     break
                 decision = self.broker.handle_client_bytes(client.client_id, data)
-                self.write_status()
+                self.write_status(force=True)
                 for direct_chunk in decision.direct_chunks:
                     client.send(direct_chunk)
                 if not decision.serial_chunks:

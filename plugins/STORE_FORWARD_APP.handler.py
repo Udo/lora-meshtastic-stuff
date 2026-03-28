@@ -95,74 +95,47 @@ def _iter_recent_event_paths(api):
     return paths
 
 
+def _validated_bool(config, key, default, api, path):
+    value = config.get(key, default)
+    if isinstance(value, bool):
+        return value
+    api["logger"].warning("plugin %s skipped invalid %s in %s: %r", api["plugin_name"], key, path, value)
+    return default
+
+
+def _validated_positive_int(config, key, default, api, path):
+    value = config.get(key, default)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        api["logger"].warning("plugin %s skipped invalid %s in %s: %r", api["plugin_name"], key, path, value)
+        return default
+    if value <= 0:
+        api["logger"].warning("plugin %s skipped non-positive %s in %s: %r", api["plugin_name"], key, path, value)
+        return default
+    return value
+
+
+_CONFIG_DEFAULTS = {
+    "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
+    "heartbeat_interval_secs": DEFAULT_HEARTBEAT_INTERVAL_SECS,
+    "heartbeat_secondary": DEFAULT_HEARTBEAT_SECONDARY,
+    "replay_duplicates": DEFAULT_REPLAY_DUPLICATES,
+}
+
+
 def _load_config(api):
     path = _config_path(api)
     if not path.exists():
-        return {
-            "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
-            "heartbeat_interval_secs": DEFAULT_HEARTBEAT_INTERVAL_SECS,
-            "heartbeat_secondary": DEFAULT_HEARTBEAT_SECONDARY,
-            "replay_duplicates": DEFAULT_REPLAY_DUPLICATES,
-        }
+        return dict(_CONFIG_DEFAULTS)
     config = _safe_read_json(path, api, context="config")
     if not isinstance(config, dict):
-        return {
-            "heartbeat_enabled": DEFAULT_HEARTBEAT_ENABLED,
-            "heartbeat_interval_secs": DEFAULT_HEARTBEAT_INTERVAL_SECS,
-            "heartbeat_secondary": DEFAULT_HEARTBEAT_SECONDARY,
-            "replay_duplicates": DEFAULT_REPLAY_DUPLICATES,
-        }
-    heartbeat_enabled = config.get("heartbeat_enabled", DEFAULT_HEARTBEAT_ENABLED)
-    if not isinstance(heartbeat_enabled, bool):
-        api["logger"].warning(
-            "plugin %s skipped invalid heartbeat_enabled flag in %s: %r",
-            api["plugin_name"],
-            path,
-            heartbeat_enabled,
-        )
-        heartbeat_enabled = DEFAULT_HEARTBEAT_ENABLED
-    heartbeat_secondary = config.get("heartbeat_secondary", DEFAULT_HEARTBEAT_SECONDARY)
-    if not isinstance(heartbeat_secondary, bool):
-        api["logger"].warning(
-            "plugin %s skipped invalid heartbeat_secondary flag in %s: %r",
-            api["plugin_name"],
-            path,
-            heartbeat_secondary,
-        )
-        heartbeat_secondary = DEFAULT_HEARTBEAT_SECONDARY
-    heartbeat_interval_secs = config.get("heartbeat_interval_secs", DEFAULT_HEARTBEAT_INTERVAL_SECS)
-    try:
-        heartbeat_interval_secs = int(heartbeat_interval_secs)
-    except (TypeError, ValueError):
-        api["logger"].warning(
-            "plugin %s skipped invalid heartbeat_interval_secs in %s: %r",
-            api["plugin_name"],
-            path,
-            heartbeat_interval_secs,
-        )
-        heartbeat_interval_secs = DEFAULT_HEARTBEAT_INTERVAL_SECS
-    if heartbeat_interval_secs <= 0:
-        api["logger"].warning(
-            "plugin %s skipped non-positive heartbeat_interval_secs in %s: %r",
-            api["plugin_name"],
-            path,
-            heartbeat_interval_secs,
-        )
-        heartbeat_interval_secs = DEFAULT_HEARTBEAT_INTERVAL_SECS
-    replay_duplicates = config.get("replay_duplicates", DEFAULT_REPLAY_DUPLICATES)
-    if not isinstance(replay_duplicates, bool):
-        api["logger"].warning(
-            "plugin %s skipped invalid replay_duplicates flag in %s: %r",
-            api["plugin_name"],
-            path,
-            replay_duplicates,
-        )
-        replay_duplicates = DEFAULT_REPLAY_DUPLICATES
+        return dict(_CONFIG_DEFAULTS)
     return {
-        "heartbeat_enabled": heartbeat_enabled,
-        "heartbeat_interval_secs": heartbeat_interval_secs,
-        "heartbeat_secondary": heartbeat_secondary,
-        "replay_duplicates": replay_duplicates,
+        "heartbeat_enabled": _validated_bool(config, "heartbeat_enabled", DEFAULT_HEARTBEAT_ENABLED, api, path),
+        "heartbeat_interval_secs": _validated_positive_int(config, "heartbeat_interval_secs", DEFAULT_HEARTBEAT_INTERVAL_SECS, api, path),
+        "heartbeat_secondary": _validated_bool(config, "heartbeat_secondary", DEFAULT_HEARTBEAT_SECONDARY, api, path),
+        "replay_duplicates": _validated_bool(config, "replay_duplicates", DEFAULT_REPLAY_DUPLICATES, api, path),
     }
 
 
@@ -453,7 +426,7 @@ def _emit_heartbeat(api, config):
 
 
 def tick(event, api):
-    break_cleanup = False
+    should_clean = True
     state_path = _cleanup_state_path(api)
     if state_path.exists():
         state = _safe_read_json(state_path, api, context="cleanup state")
@@ -461,22 +434,10 @@ def tick(event, api):
             try:
                 last_cleanup_ts = float(state.get("last_cleanup_ts", 0))
             except (TypeError, ValueError):
-                api["logger"].warning(
-                    "plugin %s skipped invalid cleanup state timestamp in %s: %r",
-                    api["plugin_name"],
-                    state_path,
-                    state.get("last_cleanup_ts"),
-                )
+                pass
             else:
-                if api["time"]() - last_cleanup_ts < 24 * 60 * 60:
-                    break_cleanup = True
-                else:
-                    break_cleanup = False
-        else:
-            break_cleanup = False
-    else:
-        break_cleanup = False
-    if not break_cleanup:
+                should_clean = (api["time"]() - last_cleanup_ts) >= 24 * 60 * 60
+    if should_clean:
         _run_cleanup(api)
     heartbeat_due, config, _ = _heartbeat_due(api)
     if heartbeat_due:

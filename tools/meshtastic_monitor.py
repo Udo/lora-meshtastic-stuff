@@ -20,6 +20,7 @@ from _meshtastic_common import (
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
+    strip_raw,
     style,
 )
 
@@ -47,16 +48,6 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def strip_raw(obj):
-    if isinstance(obj, dict):
-        return {key: strip_raw(value) for key, value in obj.items() if key != "raw"}
-    if isinstance(obj, list):
-        return [strip_raw(item) for item in obj]
-    if isinstance(obj, bytes):
-        return f"<{len(obj)} bytes>"
-    return obj
-
-
 def packet_sender_label(packet: dict, iface=None) -> str:
     from_id = str(packet.get("fromId") or "")
     if iface is not None:
@@ -78,12 +69,11 @@ def display_topic_name(topic_name: str) -> str:
 
 
 def packet_sender_column(packet: dict, iface=None) -> str:
-    label = packet_sender_label(packet, iface)
     if iface is not None:
-        identity = lookup_identity(iface, node_num=packet.get("from"), node_id=packet.get("fromId"))
+        identity = lookup_identity(iface, node_num=packet.get("from"), node_id=str(packet.get("fromId") or ""))
         if identity.short_name:
             return identity.short_name[:5].ljust(5)
-    return label
+    return packet_sender_label(packet)
 
 
 def sender_column(topic_name: str, kwargs: dict) -> str:

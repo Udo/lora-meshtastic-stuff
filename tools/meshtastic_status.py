@@ -16,6 +16,8 @@ from _meshtastic_common import (
     connect_interface_for_target,
     connection_error_message,
     ensure_repo_python,
+    iface_local_node_num,
+    iface_nodes,
     interface_target,
     resolve_meshtastic_target,
     summarize_proxy_runtime,
@@ -106,17 +108,6 @@ def config_enum(section: dict, key: str, raw_section, raw_field: str) -> str:
         return "-"
     field = raw_section.DESCRIPTOR.fields_by_name[raw_field]
     return enum_name(field.enum_type, getattr(raw_section, raw_field))
-
-
-def iface_nodes(iface) -> dict[str, dict[str, object]]:
-    nodes = getattr(iface, "nodes", None)
-    return nodes if isinstance(nodes, dict) else {}
-
-
-def iface_local_node_num(iface) -> int | None:
-    my_info = getattr(iface, "myInfo", None)
-    node_num = getattr(my_info, "my_node_num", None)
-    return node_num if isinstance(node_num, int) else None
 
 
 def format_fixed_position(local_node: dict, fixed_position: object) -> str:

@@ -15,6 +15,7 @@ from _meshtastic_common import (
     ensure_repo_python,
     interface_target,
     resolve_meshtastic_target,
+    strip_raw,
     style,
 )
 from meshtastic_messages import (
@@ -46,16 +47,6 @@ except ModuleNotFoundError as exc:
 
 PALETTE = Palette()
 DEFAULT_LOG_NAME = "protocol"
-
-
-def strip_raw(obj):
-    if isinstance(obj, dict):
-        return {key: strip_raw(value) for key, value in obj.items() if key != "raw"}
-    if isinstance(obj, list):
-        return [strip_raw(item) for item in obj]
-    if isinstance(obj, bytes):
-        return f"<{len(obj)} bytes>"
-    return obj
 
 
 def event_kind_from_decoded(decoded: dict[str, object]) -> str:

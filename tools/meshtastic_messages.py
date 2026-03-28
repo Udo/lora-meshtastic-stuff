@@ -21,6 +21,8 @@ from _meshtastic_common import (
     connect_interface_for_target,
     connection_error_message,
     ensure_repo_python,
+    iface_local_node_num,
+    iface_nodes,
     interface_target,
     resolve_meshtastic_target,
     style,
@@ -329,31 +331,20 @@ def node_identity_from_node(node: dict[str, object]) -> NodeIdentity:
     )
 
 
-def interface_nodes(iface) -> dict[str, dict[str, object]]:
-    nodes = getattr(iface, "nodes", None)
-    return nodes if isinstance(nodes, dict) else {}
-
-
-def interface_local_node_num(iface) -> int | None:
-    my_info = getattr(iface, "myInfo", None)
-    node_num = getattr(my_info, "my_node_num", None)
-    return node_num if isinstance(node_num, int) else None
-
-
 def known_nodes(iface) -> list[NodeIdentity]:
-    return [node_identity_from_node(node) for node in interface_nodes(iface).values()]
+    return [node_identity_from_node(node) for node in iface_nodes(iface).values()]
 
 
 def find_local_identity(iface) -> NodeIdentity:
-    local_num = interface_local_node_num(iface)
-    for node in interface_nodes(iface).values():
+    local_num = iface_local_node_num(iface)
+    for node in iface_nodes(iface).values():
         if node.get("num") == local_num:
             return node_identity_from_node(node)
     return NodeIdentity(node_id="-", node_num=local_num, long_name="", short_name="")
 
 
 def lookup_identity(iface, *, node_num: int | None = None, node_id: str = "") -> NodeIdentity:
-    for node in interface_nodes(iface).values():
+    for node in iface_nodes(iface).values():
         if node_num is not None and node.get("num") == node_num:
             return node_identity_from_node(node)
         user = node.get("user", {})
