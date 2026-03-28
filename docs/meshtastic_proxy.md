@@ -118,6 +118,8 @@ Direct-message routing rules:
 - if the proxy config file defines `dm_mode`, a second namespace `plugins/DM_<dm_mode>/` is appended after the base namespace
 - per namespace, the order is `handler_first.py`, first-word handler, sender-shortname handler, then `handler.py`
 - a DM handler can return `{"continue_chain": True}` to continue or also include `message: <mesh_pb2.FromRadio>` to rewrite the packet seen by downstream DM handlers
+- keep automated DM replies short; practical testing in this repo showed that a 426-byte DM banner was too large to deliver reliably, while a short reply on the same path worked
+- treat about 200 UTF-8 bytes as a conservative upper bound unless you have tested your exact firmware and client combination
 
 For the full DM behavior, examples, and caveats around sender short names, see [meshtastic_plugins.md](./meshtastic_plugins.md).
 

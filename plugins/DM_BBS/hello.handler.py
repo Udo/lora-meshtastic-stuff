@@ -57,7 +57,15 @@ def _upsert_user(event, api) -> None:
 
 
 def _banner_text(event, api) -> str:
-    return "Hi from MeshBBS"
+    bbs_name = str(event.get("local_short_name") or "").strip() or "BBS"
+    bbs_dir = _bbs_dir(api)
+    user_count = len(list((bbs_dir / "users").glob("*.json"))) if (bbs_dir / "users").exists() else 0
+    return "\n".join(
+        [
+            f"{bbs_name} BBS",
+            f"Status: online | users: {user_count} | Commands: hello, help, list, news, put, show, sub, unsub, time, topics, who"
+        ]
+    )
 
 
 def handle_packet(event, api):

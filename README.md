@@ -311,6 +311,8 @@ The DM router only applies to incoming `TEXT_MESSAGE_APP` packets whose destinat
 
 DM handlers stop the chain by default. To continue, return a dict containing `continue_chain: True`. A handler can also return `message: <FromRadio>` so downstream DM handlers see a rewritten message.
 
+Keep automated DM replies short. In practical testing, an auto-reply banner around 426 UTF-8 bytes was too large to deliver reliably, while a short reply on the same path worked immediately. Treat about 200 UTF-8 bytes as a conservative upper bound for DM plugin replies unless you have tested your exact firmware and client combination.
+
 The detailed DM documentation, including examples for `handler_first.py`, sender-specific handlers, sanitizers, `dm_mode`, and continue/rewrite chaining, lives in [docs/meshtastic_plugins.md](docs/meshtastic_plugins.md).
 
 Inbound text traffic can also route through channel-specific plugin namespaces under `plugins/CHAN_<channel name>/`.

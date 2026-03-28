@@ -86,6 +86,24 @@ That means:
 
 The DM chain is therefore an extra layer on top of the usual port plugin dispatch, not a replacement for it.
 
+### Direct Message Payload Caveat
+
+When a DM handler emits a reply through `send_mesh_packet()` or `send_app()`, keep the text payload small.
+
+In practice, `TEXT_MESSAGE_APP` direct messages have a fairly small usable payload budget, and oversized replies can fail in a confusing way:
+
+- the sender may still see a local echo or an ACK-like success path
+- the remote node may not receive or display the actual message
+- large multiline banners are especially risky
+
+We do not currently enforce a hard cap in the proxy, but practical testing in this repo showed that a DM auto-reply around 426 UTF-8 bytes was too large, while a short 15-byte reply worked immediately on the same path.
+
+Treat about 200 UTF-8 bytes as a conservative upper bound for automated DM replies unless you have tested your exact firmware and client combination. If you need richer output, prefer:
+
+- a short summary plus follow-up commands
+- multiple small replies
+- channel workflows instead of large direct-message banners
+
 ### `dm_mode` Configuration
 
 The proxy reads `dm_mode` from the same env-style config file already passed as `--config-file`.
