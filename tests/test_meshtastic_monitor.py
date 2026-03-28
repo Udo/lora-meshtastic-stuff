@@ -86,6 +86,28 @@ class MeshtasticMonitorTests(unittest.TestCase):
         self.assertIn("PEER ", line)
         self.assertIn('text="hello mesh"', line)
 
+    def test_emit_prints_numeric_sender_when_shortname_is_missing(self) -> None:
+        args = monitor.build_parser().parse_args([])
+        reporter = monitor.Monitor(args)
+        reporter.target = type("Target", (), {"label": "test", "mode": "serial"})()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            reporter.emit(
+                "meshtastic.receive.position",
+                {
+                    "interface": FakeInterface(),
+                    "packet": {
+                        "from": 999,
+                        "decoded": {"position": {"latitude": 49.0}, "portnum": "POSITION_APP"},
+                    },
+                },
+            )
+
+        line = buffer.getvalue().strip()
+        self.assertIn("receive.position  ", line)
+        self.assertIn("#999", line)
+        self.assertIn('position={"latitude": 49.0}', line)
+
 
 if __name__ == "__main__":
     unittest.main()

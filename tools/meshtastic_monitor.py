@@ -65,6 +65,9 @@ def packet_sender_label(packet: dict, iface=None) -> str:
             return identity.short_name
     if from_id:
         return from_id
+    node_num = packet.get("from")
+    if node_num is not None:
+        return f"#{node_num}"
     return "-"
 
 
@@ -75,7 +78,12 @@ def display_topic_name(topic_name: str) -> str:
 
 
 def packet_sender_column(packet: dict, iface=None) -> str:
-    return packet_sender_label(packet, iface)[:5].ljust(5)
+    label = packet_sender_label(packet, iface)
+    if iface is not None:
+        identity = lookup_identity(iface, node_num=packet.get("from"), node_id=packet.get("fromId"))
+        if identity.short_name:
+            return identity.short_name[:5].ljust(5)
+    return label
 
 
 def sender_column(topic_name: str, kwargs: dict) -> str:
