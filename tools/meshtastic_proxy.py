@@ -124,7 +124,9 @@ class MeshtasticProxy:
         self.status_write_interval = status_write_interval
         self.runtime_dir = Path(status_file).resolve().parent if status_file else Path(__file__).resolve().parents[1] / ".runtime" / "meshtastic"
         self.plugin_state_dir = self.runtime_dir / "plugins"
-        self.single_client_mode = not is_loopback_bind_host(listen_host)
+        # Legacy status field kept for compatibility. The proxy now always allows
+        # multiple TCP clients and lets the broker arbitrate conflicting traffic.
+        self.single_client_mode = False
         self.stop_event = threading.Event()
         self.server_socket: socket.socket | None = None
         self.serial_handle = None
@@ -276,20 +278,6 @@ class MeshtasticProxy:
         LOGGER.info("client connected: %s:%s", address[0], address[1])
         self.write_status(force=True)
         return client
-
-    def replace_existing_clients(self, address: tuple[str, int]) -> None:
-        with self.clients_lock:
-            existing_clients = list(self.clients)
-        if not existing_clients:
-            return
-        LOGGER.info(
-            "closing %s existing client(s) before accepting %s:%s to mirror official TCP server semantics",
-            len(existing_clients),
-            address[0],
-            address[1],
-        )
-        for client in existing_clients:
-            self.drop_client(client)
 
     def drop_client(self, client: ClientConnection) -> None:
         with self.clients_lock:
@@ -740,9 +728,8 @@ class MeshtasticProxy:
         """Run meshtastic_status.py node-info via the proxy's own TCP port and apply the result.
 
         Waits briefly first so that config-dump frames from the initial handshake can populate
-        metadata via _remember_config_frame — which avoids competing with the phone app for the
-        single TCP slot.  The subprocess only runs if we still lack short_name or channels after
-        the wait.
+        metadata via _remember_config_frame. The subprocess only runs if we still lack short_name
+        or channels after the wait.
         """
         if not self._bootstrap_lock.acquire(blocking=False):
             return
@@ -1279,8 +1266,6 @@ class MeshtasticProxy:
 
             try:
                 self.configure_client_socket(sock)
-                if self.single_client_mode:
-                    self.replace_existing_clients(address)
                 client = self.register_client(sock, address)
                 thread = threading.Thread(target=self.client_reader_loop, args=(client,), daemon=True)
                 thread.start()

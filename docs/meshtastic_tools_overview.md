@@ -31,7 +31,7 @@
 - `meshtastic_monitor.py` is the continuous event stream consumer for connection, node, receive, and optional log topics.
 - `meshtastic_messages.py` is the lightweight send-and-transcript tool for private sends plus public/private message logging into `~/.local/log/meshtastic/*.log`, with local `tail` and `grep` helpers for those transcript files.
 - `meshtastic_protocol.py` is the broad protocol/event archivist for long-running message, telemetry, and housekeeping capture into the same transcript directory.
-- `meshtastic_proxy.py` is the long-running serial-owning TCP endpoint that lets multiple local clients share one radio connection.
+- `meshtastic_proxy.py` is the long-running serial-owning TCP endpoint that lets multiple TCP clients share one radio connection.
 - `meshtastic_broker.py` is the frame-aware policy layer inside the proxy that arbitrates mutating control traffic.
 - `setup/meshtastic-python.sh` is the operational wrapper that bootstraps the environment, manages the proxy lifecycle, and routes user-facing commands through the correct target.
 - On Linux, the wrapper can install the proxy as a systemd user service so it auto-starts and logs to journald.

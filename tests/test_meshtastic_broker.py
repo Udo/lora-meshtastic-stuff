@@ -777,7 +777,7 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
             self.assertEqual(received, b"DEBUG | waiting for client protobuf\n")
 
-    def test_proxy_replaces_existing_clients_on_non_loopback_bind(self) -> None:
+    def test_proxy_allows_multiple_clients_on_non_loopback_bind(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         fake_serial = FakeSerialHandle()
         proxy = LoopbackMeshtasticProxy(
@@ -814,20 +814,16 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
                 with socket.create_connection(("127.0.0.1", port), timeout=1.0) as client_b:
                     client_b.settimeout(1.0)
-                    wait_until(lambda: read_status().get("client_count") == 1)
+                    wait_until(lambda: read_status().get("client_count") == 2)
                     client_b.sendall(make_want_config_frame(222))
-                    wait_until(lambda: non_probe_writes(fake_serial.writes)[-1] == make_want_config_frame(222))
+                    wait_until(lambda: make_want_config_frame(222) in non_probe_writes(fake_serial.writes))
 
                     status = read_status()
-                    self.assertEqual(status["client_count"], 1)
-                    self.assertEqual(status["single_client_mode"], True)
+                    self.assertEqual(status["client_count"], 2)
+                    self.assertEqual(status["single_client_mode"], False)
 
-                closed = False
-                try:
-                    closed = client_a.recv(1) == b""
-                except OSError:
-                    closed = True
-                self.assertTrue(closed)
+                client_a.sendall(make_want_config_frame(333))
+                wait_until(lambda: make_want_config_frame(333) in non_probe_writes(fake_serial.writes))
         finally:
             proxy.stop()
             accept_thread.join(timeout=1.0)

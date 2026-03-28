@@ -17,8 +17,9 @@
 
 ## Function
 
-- Owns the single Meshtastic serial device and exposes a Meshtastic-compatible TCP endpoint for local clients.
+- Owns the single Meshtastic serial device and exposes a Meshtastic-compatible TCP endpoint for local and LAN clients.
 - Broadcasts radio output to all connected TCP clients.
+- Keeps multiple TCP clients connected at once; the broker arbitrates conflicting host-session and control traffic instead of evicting clients on connect.
 - Delegates client-to-radio arbitration to `meshtastic_broker.py`.
 - Discovers packet handlers from the repo-local `plugins/` directory using `PORTNAME.handler.py` or `PORTNUM.handler.py` filenames.
 - For `PRIVATE_APP`, also supports subtype routing via `PRIVATE_APP.<type>.handler.py` when the payload exposes a parseable `type`.
