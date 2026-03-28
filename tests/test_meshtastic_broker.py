@@ -827,6 +827,58 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         logged = output_file.read_text(encoding="utf-8").strip()
         self.assertRegex(logged, r"^client-\d+:hello$")
 
+    def test_proxy_echoes_client_sent_text_frame_to_connected_clients(self) -> None:
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1", from_node=777))
+        wait_until(lambda: self.proxy._local_node_num == 777)
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            client.sendall(make_text_frame())
+
+            echoed = recv_fromradio_frames(client, expected_count=1)[0]
+
+        self.assertEqual(int(echoed.packet.decoded.portnum), int(portnums_pb2.TEXT_MESSAGE_APP))
+        self.assertEqual(bytes(echoed.packet.decoded.payload), b"hello")
+        self.assertEqual(int(getattr(echoed.packet, "from", 0)), 777)
+        self.assertNotEqual(int(getattr(echoed.packet, "id", 0)), 0)
+
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+        forwarded = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[-1])
+        self.assertEqual(int(getattr(forwarded.packet, "from", 0)), 777)
+        self.assertEqual(int(getattr(forwarded.packet, "id", 0)), int(getattr(echoed.packet, "id", 0)))
+
+    def test_proxy_echoes_plugin_generated_text_to_connected_clients(self) -> None:
+        plugin_path = self.plugins_dir / "TEXT_MESSAGE_APP.handler.py"
+        plugin_path.write_text(
+            "def handle_packet(event, api):\n"
+            "    if event.get('plugin_origin_likely'):\n"
+            "        return\n"
+            "    if event['payload'] != b'trigger':\n"
+            "        return\n"
+            "    packet = api['mesh_pb2'].MeshPacket()\n"
+            "    packet.decoded.portnum = api['portnums_pb2'].TEXT_MESSAGE_APP\n"
+            "    packet.decoded.payload = b'local-reply'\n"
+            "    api['send_mesh_packet'](packet)\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("UDO1", from_node=777))
+        wait_until(lambda: self.proxy._local_node_num == 777)
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+            self.fake_serial.inject_read(make_fromradio_text_frame(b"trigger"))
+            frames = recv_fromradio_frames(client, expected_count=2)
+
+        payloads = [bytes(frame.packet.decoded.payload) for frame in frames]
+        self.assertEqual(sorted(payloads), [b"local-reply", b"trigger"])
+
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+        forwarded = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[-1])
+        self.assertEqual(bytes(forwarded.packet.decoded.payload), b"local-reply")
+        self.assertEqual(int(getattr(forwarded.packet, "from", 0)), 777)
+        self.assertNotEqual(int(getattr(forwarded.packet, "id", 0)), 0)
+
     def test_plugin_handler_errors_are_logged_and_do_not_break_proxy(self) -> None:
         plugin_path = self.plugins_dir / "TEXT_MESSAGE_APP.handler.py"
         plugin_path.write_text(

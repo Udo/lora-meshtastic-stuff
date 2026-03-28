@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 
 from meshtastic_messages import lookup_identity
 
@@ -92,6 +93,16 @@ def packet_preview(packet: dict, iface=None) -> str:
             value = strip_raw(decoded[key])
             return f"{key}={json.dumps(value, sort_keys=True)}"
 
+    if decoded.get("portnum") == "TEXT_MESSAGE_APP":
+        payload = decoded.get("payload")
+        if isinstance(payload, bytes):
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                text = None
+            if text is not None:
+                return f"text={json.dumps(text)}"
+
     if "portnum" in decoded:
         payload = decoded.get("payload")
         if isinstance(payload, bytes):
@@ -154,6 +165,9 @@ def topic_tags(topic_name: str, kwargs: dict) -> set[str]:
             lowered = str(portnum).lower()
             tags.add(lowered)
             tags.add(f"receive.{lowered}")
+            if lowered == "text_message_app":
+                tags.add("text")
+                tags.add("receive.text")
 
     return tags
 
@@ -190,7 +204,6 @@ def event_summary(topic_name: str, kwargs: dict) -> str:
 
     if topic_name.startswith("meshtastic.receive"):
         packet = kwargs.get("packet", {})
-        packet = strip_raw(packet)
         return packet_preview(packet, kwargs.get("interface"))
 
     cleaned = {key: strip_raw(value) for key, value in kwargs.items() if key != "interface"}
@@ -240,6 +253,7 @@ class Monitor:
         self.args = args
         self.target = resolve_meshtastic_target(args.port, args.host, args.tcp_port)
         self.stop_requested = False
+        self.stop_event = Event()
         self.interface = None
         self.include_filters = parse_filters(args.only)
         self.exclude_filters = parse_filters(args.exclude)
@@ -247,6 +261,13 @@ class Monitor:
 
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
+        self.stop_event.set()
+        interface = self.interface
+        if interface is not None:
+            try:
+                interface.close()
+            except Exception:
+                pass
 
     def should_emit(self, topic_name: str, kwargs: dict) -> bool:
         if self.args.topic_prefix and not topic_name.startswith(self.args.topic_prefix):
@@ -337,12 +358,15 @@ class Monitor:
                     flush=True,
                 )
 
-            while not self.stop_requested:
-                time.sleep(0.25)
+            while not self.stop_event.wait(0.25):
+                continue
         finally:
             pub.unsubscribe(self.on_event, pub.ALL_TOPICS)
             if self.interface is not None:
-                self.interface.close()
+                try:
+                    self.interface.close()
+                except Exception:
+                    pass
             if self.log_handle is not None:
                 self.log_handle.close()
         return 0

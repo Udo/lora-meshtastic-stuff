@@ -50,6 +50,10 @@ SERIAL_WAIT_SLICE_SECONDS = 0.25
 DM_MODE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 CHANNEL_REFRESH_INTERVAL_SECONDS = 300.0
 MAX_CHANNELS = 8
+LOCAL_ECHO_PORTNUMS = {
+    int(portnums_pb2.TEXT_MESSAGE_APP),
+    int(portnums_pb2.PRIVATE_APP),
+}
 
 
 @dataclass(eq=False)
@@ -104,6 +108,7 @@ class MeshtasticProxy:
         self._plugin_loop_guard_lock = threading.Lock()
         self._node_short_names: dict[int, str] = {}
         self._local_short_name: str | None = None
+        self._local_node_num: int | None = None
         self._channel_names_by_num: dict[int, str] = {}
         self._channel_details_by_num: dict[int, dict[str, object]] = {}
         self._channel_refresh_due_at = 0.0
@@ -286,12 +291,64 @@ class MeshtasticProxy:
         self.write_serial(encode_frame(message.SerializeToString()))
 
     def send_mesh_packet(self, packet: mesh_pb2.MeshPacket) -> None:
+        self._prepare_packet_for_local_echo(packet)
         to_radio = mesh_pb2.ToRadio()
         to_radio.packet.CopyFrom(packet)
         self.send_toradio(to_radio)
+        self._broadcast_local_echo(packet)
 
     def send_fromradio(self, client_id: str, message: mesh_pb2.FromRadio) -> bool:
         return self.send_client(client_id, encode_frame(message.SerializeToString()))
+
+    def _allocate_local_packet_id(self) -> int:
+        packet_id = int(time.time_ns() & 0xFFFFFFFF)
+        return packet_id if packet_id else 1
+
+    def _should_echo_packet_locally(self, packet: mesh_pb2.MeshPacket | None) -> bool:
+        if packet is None or not packet.HasField("decoded"):
+            return False
+        return int(packet.decoded.portnum) in LOCAL_ECHO_PORTNUMS
+
+    def _prepare_packet_for_local_echo(self, packet: mesh_pb2.MeshPacket | None) -> bool:
+        if not self._should_echo_packet_locally(packet):
+            return False
+        assert packet is not None
+        changed = False
+        if not int(getattr(packet, "id", 0)):
+            packet.id = self._allocate_local_packet_id()
+            changed = True
+        if self._local_node_num is not None and not int(getattr(packet, "from", 0)):
+            setattr(packet, "from", int(self._local_node_num))
+            changed = True
+        return changed
+
+    def _local_echo_frame(self, packet: mesh_pb2.MeshPacket | None) -> bytes | None:
+        if not self._should_echo_packet_locally(packet):
+            return None
+        assert packet is not None
+        from_radio = mesh_pb2.FromRadio()
+        from_radio.packet.CopyFrom(packet)
+        return encode_frame(from_radio.SerializeToString())
+
+    def _broadcast_local_echo(self, packet: mesh_pb2.MeshPacket | None) -> None:
+        echo_frame = self._local_echo_frame(packet)
+        if echo_frame is None:
+            return
+        self.broadcast(echo_frame)
+
+    def _prepare_client_frame_for_local_echo(self, frame: bytes) -> tuple[bytes, bytes | None]:
+        try:
+            message = decode_toradio_frame(frame)
+        except Exception:
+            return frame, None
+        if not message.HasField("packet"):
+            return frame, None
+        packet = message.packet
+        changed = self._prepare_packet_for_local_echo(packet)
+        echo_frame = self._local_echo_frame(packet)
+        if changed:
+            return encode_frame(message.SerializeToString()), echo_frame
+        return frame, echo_frame
 
     def _plugin_storage_path(self, plugin_name: str, relative_path: str) -> Path:
         return plugin_storage_path(self.runtime_dir, plugin_name, relative_path)
@@ -517,6 +574,9 @@ class MeshtasticProxy:
     def _remember_admin_state(self, packet, portnum_name: str | None) -> None:
         if packet is None or portnum_name != "ADMIN_APP":
             return
+        packet_from = int(getattr(packet, "from", 0) or 0)
+        if packet_from:
+            self._local_node_num = packet_from
         admin_message = admin_pb2.AdminMessage()
         try:
             admin_message.ParseFromString(packet.decoded.payload)
@@ -875,7 +935,10 @@ class MeshtasticProxy:
             event.update(self._message_metadata(message, packet, "client_to_radio"))
             result = self.plugins.dispatch_client_call(portnum_name, portnum, event, api)
             if not result.get("consume"):
-                remaining_frames.append(frame)
+                serial_frame, echo_frame = self._prepare_client_frame_for_local_echo(frame)
+                if echo_frame is not None:
+                    self.broadcast(echo_frame)
+                remaining_frames.append(serial_frame)
         return remaining_frames
 
     def plugin_tick_loop(self) -> None:

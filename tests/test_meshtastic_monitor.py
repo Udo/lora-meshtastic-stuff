@@ -63,6 +63,21 @@ class MeshtasticMonitorTests(unittest.TestCase):
 
         self.assertIn("portnum=PRIVATE_APP", summary)
 
+    def test_receive_text_summary_falls_back_to_payload_decode_for_text_message_app(self) -> None:
+        summary = monitor.event_summary(
+            "meshtastic.receive.data.TEXT_MESSAGE_APP",
+            {
+                "interface": FakeInterface(),
+                "packet": {
+                    "from": 456,
+                    "fromId": "!peer",
+                    "decoded": {"portnum": "TEXT_MESSAGE_APP", "payload": b"hello payload"},
+                },
+            },
+        )
+
+        self.assertIn('text="hello payload"', summary)
+
     def test_emit_prints_padded_topic_and_shortname_column(self) -> None:
         args = monitor.build_parser().parse_args([])
         reporter = monitor.Monitor(args)
@@ -107,6 +122,24 @@ class MeshtasticMonitorTests(unittest.TestCase):
         self.assertIn("receive.position  ", line)
         self.assertIn("#999", line)
         self.assertIn('position={"latitude": 49.0}', line)
+
+    def test_request_stop_closes_interface_immediately(self) -> None:
+        args = monitor.build_parser().parse_args([])
+        reporter = monitor.Monitor(args)
+
+        class ClosableInterface:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        reporter.interface = ClosableInterface()
+        reporter.request_stop()
+
+        self.assertTrue(reporter.stop_requested)
+        self.assertTrue(reporter.stop_event.is_set())
+        self.assertTrue(reporter.interface.closed)
 
 
 if __name__ == "__main__":
