@@ -186,6 +186,46 @@ def active_channel_rows(iface) -> list[dict[str, object]]:
     return [row for row in collect_channel_rows(iface) if row.get("role") != "DISABLED"]
 
 
+def collect_node_info(iface) -> dict:
+    """Return node identity, firmware version, and full channel list as a plain JSON-serialisable dict."""
+    local_node = find_local_node(iface)
+    user = local_node.get("user", {})
+    metadata = to_dict(getattr(iface, "metadata", None))
+    local_node_iface = getattr(iface, "localNode", None)
+
+    channels: list[dict] = []
+    raw_channels = getattr(local_node_iface, "channels", None) if local_node_iface else None
+    if raw_channels:
+        for raw in raw_channels:
+            plain = protobuf_to_plain(raw) if hasattr(raw, "DESCRIPTOR") else (dict(raw) if isinstance(raw, dict) else {})
+            if not isinstance(plain, dict):
+                continue
+            try:
+                index_value = int(plain.get("index"))
+            except (TypeError, ValueError):
+                continue
+            settings = plain.get("settings") or {}
+            psk_raw = settings.get("psk")
+            psk_hex = psk_raw.hex() if isinstance(psk_raw, (bytes, bytearray)) else ""
+            channels.append({
+                "index": index_value,
+                "role": str(plain.get("role") or "DISABLED"),
+                "name": str(settings.get("name") or ""),
+                "channel_num": int(settings.get("channel_num") or 0),
+                "psk_hex": psk_hex,
+            })
+    channels.sort(key=lambda r: r.get("index", 999))
+
+    return {
+        "channels": channels,
+        "firmware_version": str(metadata.get("firmwareVersion") or ""),
+        "long_name": str(user.get("longName") or ""),
+        "node_id": str(user.get("id") or ""),
+        "node_num": local_node.get("num"),
+        "short_name": str(user.get("shortName") or ""),
+    }
+
+
 def _format_channel_list(rows: list[dict[str, object]]) -> str:
     names = [_format_channel_label(row) for row in rows]
     return ", ".join(names) if names else "-"
@@ -653,6 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     telemetry_parser.add_argument("--timeout", type=float, default=10.0, help="Seconds to wait per node for a telemetry response")
     telemetry_parser.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable output")
+    subparsers.add_parser("node-info", help="Output node identity, firmware version, and channel list as JSON")
     subparsers.add_parser("raw-info", help="Show raw CLI info output")
 
     traceroute_parser = subparsers.add_parser("traceroute", help="Run a traceroute via Meshtastic CLI")
@@ -684,6 +725,8 @@ def main() -> int:
             render_config(iface, args.sections)
         elif command == "channels":
             render_channels(iface)
+        elif command == "node-info":
+            print(json.dumps(collect_node_info(iface), sort_keys=True))
         elif command == "nodes":
             render_nodes(iface)
         elif command == "neighbors":

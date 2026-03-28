@@ -12,10 +12,11 @@ import signal
 import socket
 import sys
 import threading
+import subprocess
 import time
 from dataclasses import dataclass, field
 
-from _meshtastic_common import DEFAULT_SERIAL_PORT, DEFAULT_TCP_HOST, DEFAULT_TCP_PORT, ensure_repo_python
+from _meshtastic_common import DEFAULT_SERIAL_PORT, DEFAULT_TCP_HOST, DEFAULT_TCP_PORT, VENV_PYTHON, ensure_repo_python
 from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 from meshtastic_broker import MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
 from meshtastic_plugins import (
@@ -50,6 +51,8 @@ DM_PLUGIN_DIRNAME = "DM"
 SERIAL_WAIT_SLICE_SECONDS = 0.25
 DM_MODE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 CHANNEL_REFRESH_INTERVAL_SECONDS = 300.0
+BOOTSTRAP_METADATA_INTERVAL_SECONDS = 3600.0
+STATUS_SCRIPT = Path(__file__).resolve().parent / "meshtastic_status.py"
 MAX_CHANNELS = 8
 LOCAL_ECHO_PORTNUMS = {
     int(portnums_pb2.TEXT_MESSAGE_APP),
@@ -144,6 +147,9 @@ class MeshtasticProxy:
         self._proxy_config_cache: dict[str, str] | None = None
         self._proxy_config_mtime_ns: int | None = None
         self._plugin_loop_guard_last_cleanup = 0.0
+        self._firmware_version: str | None = None
+        self._bootstrap_metadata_due_at = 0.0
+        self._bootstrap_lock = threading.Lock()
 
     def configure_client_socket(self, sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -183,6 +189,9 @@ class MeshtasticProxy:
                 "serial_connected": self.serial_ready.is_set(),
                 "pid": os.getpid(),
                 "single_client_mode": self.single_client_mode,
+                "firmware_version": self._firmware_version,
+                "local_node_num": self._local_node_num,
+                "local_short_name": self._local_short_name,
             }
         )
         return snapshot
@@ -644,20 +653,81 @@ class MeshtasticProxy:
         channel = getattr(admin_message, "get_channel_response", None)
         channel_name = str(getattr(getattr(channel, "settings", None), "name", "") or "")
         try:
-            channel_num = int(getattr(getattr(channel, "settings", None), "channel_num", 0) or 0)
+            channel_index = int(getattr(channel, "index", -1))
         except (TypeError, ValueError):
-            channel_num = 0
-        if channel_num:
-            self._channel_names_by_num[channel_num] = channel_name
+            channel_index = -1
+        if channel_index >= 0:
+            self._channel_names_by_num[channel_index] = channel_name
             psk = bytes(getattr(getattr(channel, "settings", None), "psk", b""))
             role = channel_pb2.Channel.Role.Name(int(getattr(channel, "role", channel_pb2.Channel.Role.DISABLED)))
-            self._channel_details_by_num[channel_num] = {
+            self._channel_details_by_num[channel_index] = {
                 "channel_name": channel_name,
-                "channel_num": channel_num,
-                "index": int(getattr(channel, "index", 0)),
+                "channel_num": channel_index,
+                "index": channel_index,
                 "role": role,
                 "psk": psk,
             }
+
+    def _remember_config_frame(self, message: mesh_pb2.FromRadio) -> None:
+        """Capture channel/nodeinfo/metadata from config-dump frames sent during the initial handshake.
+
+        When a TCP client connects with want_config_id, the radio emits FromRadio.channel (one per
+        slot), FromRadio.my_info, FromRadio.node_info (one per known node), and optionally
+        FromRadio.metadata.  We harvest these to avoid depending on admin-probe responses, which
+        newer firmware blocks with session passkeys.
+        """
+        try:
+            if message.HasField("channel"):
+                ch = message.channel
+                try:
+                    channel_index = int(ch.index)
+                except (TypeError, ValueError):
+                    channel_index = -1
+                if channel_index >= 0:
+                    name = str(getattr(getattr(ch, "settings", None), "name", "") or "")
+                    psk = bytes(getattr(getattr(ch, "settings", None), "psk", b""))
+                    role = channel_pb2.Channel.Role.Name(int(getattr(ch, "role", channel_pb2.Channel.Role.DISABLED)))
+                    if role != "DISABLED":
+                        old = self._channel_names_by_num.get(channel_index)
+                        self._channel_names_by_num[channel_index] = name
+                        self._channel_details_by_num[channel_index] = {
+                            "channel_name": name,
+                            "channel_num": channel_index,
+                            "index": channel_index,
+                            "role": role,
+                            "psk": psk,
+                        }
+                        if old != name:
+                            LOGGER.info("config-frame channel: index=%d name=%r role=%s", channel_index, name, role)
+        except Exception:
+            LOGGER.debug("_remember_config_frame channel extract failed", exc_info=True)
+        try:
+            if message.HasField("my_info"):
+                my_node_num = int(message.my_info.my_node_num)
+                if my_node_num and my_node_num != self._local_node_num:
+                    self._local_node_num = my_node_num
+                    LOGGER.info("config-frame my_info: my_node_num=%d", my_node_num)
+        except Exception:
+            LOGGER.debug("_remember_config_frame my_info extract failed", exc_info=True)
+        try:
+            if message.HasField("node_info"):
+                node_info = message.node_info
+                node_num = int(getattr(node_info, "num", 0))
+                if node_num and node_num == self._local_node_num:
+                    short_name = str(getattr(getattr(node_info, "user", None), "short_name", "") or "").strip()
+                    if short_name and short_name != self._local_short_name:
+                        self._local_short_name = short_name
+                        LOGGER.info("config-frame node_info: local short_name=%r", short_name)
+        except Exception:
+            LOGGER.debug("_remember_config_frame node_info extract failed", exc_info=True)
+        try:
+            if message.HasField("metadata"):
+                fw = str(getattr(message.metadata, "firmware_version", "") or "").strip()
+                if fw and fw != self._firmware_version:
+                    self._firmware_version = fw
+                    LOGGER.info("config-frame metadata: firmware_version=%r", fw)
+        except Exception:
+            LOGGER.debug("_remember_config_frame metadata extract failed", exc_info=True)
 
     def _send_admin_probe(self, admin_message: admin_pb2.AdminMessage) -> None:
         to_radio = mesh_pb2.ToRadio()
@@ -666,6 +736,94 @@ class MeshtasticProxy:
         to_radio.packet.decoded.want_response = True
         self.send_toradio(to_radio)
 
+    def _bootstrap_metadata_from_status(self) -> None:
+        """Run meshtastic_status.py node-info via the proxy's own TCP port and apply the result."""
+        if not self._bootstrap_lock.acquire(blocking=False):
+            return
+        try:
+            cmd = [
+                str(VENV_PYTHON),
+                str(STATUS_SCRIPT),
+                "--host", "127.0.0.1",
+                "--tcp-port", str(self.listen_port),
+                "node-info",
+            ]
+            LOGGER.info("bootstrapping local metadata via meshtastic_status.py node-info")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                LOGGER.warning("bootstrap metadata query timed out after 30s")
+                return
+            except OSError as exc:
+                LOGGER.warning("bootstrap metadata query failed to start: %s", exc)
+                return
+            if result.returncode != 0:
+                LOGGER.warning(
+                    "bootstrap metadata query exited %s; stderr: %s",
+                    result.returncode,
+                    result.stderr.strip()[:300],
+                )
+                return
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                LOGGER.warning("bootstrap metadata parse failed: %s", exc)
+                return
+            if not isinstance(data, dict):
+                LOGGER.warning("bootstrap metadata returned non-dict JSON")
+                return
+            self._apply_bootstrap_metadata(data)
+        finally:
+            self._bootstrap_lock.release()
+
+    def _apply_bootstrap_metadata(self, data: dict) -> None:
+        short_name = str(data.get("short_name") or "").strip()
+        if short_name:
+            self._local_short_name = short_name
+        node_num = data.get("node_num")
+        try:
+            node_num_int = int(node_num) if node_num is not None else None
+        except (TypeError, ValueError):
+            node_num_int = None
+        if node_num_int:
+            self._local_node_num = node_num_int
+        firmware_version = str(data.get("firmware_version") or "").strip()
+        if firmware_version:
+            self._firmware_version = firmware_version
+        channels = data.get("channels")
+        if isinstance(channels, list):
+            loaded: list[str] = []
+            for ch in channels:
+                if not isinstance(ch, dict):
+                    continue
+                try:
+                    channel_index = int(ch.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                role = str(ch.get("role") or "DISABLED")
+                name = str(ch.get("name") or "")
+                psk_hex = str(ch.get("psk_hex") or "")
+                try:
+                    psk_bytes = bytes.fromhex(psk_hex) if psk_hex else b""
+                except ValueError:
+                    psk_bytes = b""
+                self._channel_names_by_num[channel_index] = name
+                self._channel_details_by_num[channel_index] = {
+                    "channel_name": name,
+                    "channel_num": channel_index,
+                    "index": channel_index,
+                    "role": role,
+                    "psk": psk_bytes,
+                }
+                loaded.append(f"{channel_index}={name!r}/{role}")
+            LOGGER.info(
+                "bootstrap applied: short_name=%r node_num=%s firmware=%r channels=[%s]",
+                self._local_short_name,
+                self._local_node_num,
+                self._firmware_version,
+                ", ".join(loaded),
+            )
+
     def _refresh_local_metadata(self, *, force: bool = False) -> None:
         now = time.time()
         if not force and now < self._channel_refresh_due_at:
@@ -673,6 +831,13 @@ class MeshtasticProxy:
         if not self.serial_ready.is_set():
             return
         self._channel_refresh_due_at = now + CHANNEL_REFRESH_INTERVAL_SECONDS
+
+        if force or now >= self._bootstrap_metadata_due_at:
+            self._bootstrap_metadata_due_at = now + BOOTSTRAP_METADATA_INTERVAL_SECONDS
+            thread = threading.Thread(
+                target=self._bootstrap_metadata_from_status, daemon=True, name="meshtastic-bootstrap"
+            )
+            thread.start()
 
         owner_request = admin_pb2.AdminMessage()
         owner_request.get_owner_request = True
@@ -918,6 +1083,7 @@ class MeshtasticProxy:
         api = self.build_plugin_api()
         for observed in observed_frames:
             try:
+                self._remember_config_frame(observed.message)
                 packet = observed.message.packet if observed.message.HasField("packet") else None
                 portnum, portnum_name = self._packet_portnum(packet)
                 if portnum is None:
