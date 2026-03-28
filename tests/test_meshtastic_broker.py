@@ -108,6 +108,20 @@ def make_fromradio_admin_response_frame(session_passkey: bytes = b"\x01\x02\x03\
     return encode_frame(from_radio.SerializeToString())
 
 
+def make_invalid_admin_write_frame() -> bytes:
+    to_radio = mesh_pb2.ToRadio()
+    to_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
+    to_radio.packet.decoded.payload = b"\xff\xfe\xfd"
+    return make_frame(to_radio)
+
+
+def make_fromradio_invalid_admin_frame() -> bytes:
+    from_radio = mesh_pb2.FromRadio()
+    from_radio.packet.decoded.portnum = portnums_pb2.ADMIN_APP
+    from_radio.packet.decoded.payload = b"\xff\xfe\xfd"
+    return encode_frame(from_radio.SerializeToString())
+
+
 def make_fromradio_text_frame(payload: bytes = b"hello-radio") -> bytes:
     from_radio = mesh_pb2.FromRadio()
     setattr(from_radio.packet, "from", 42)
@@ -366,6 +380,13 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(len(result.serial_chunks), 1)
         self.assertEqual(result.direct_chunks, [])
 
+    def test_invalid_admin_payload_is_treated_as_non_control(self) -> None:
+        result = self.broker.handle_client_bytes("client-a", make_invalid_admin_write_frame())
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertEqual(result.direct_chunks, [])
+        self.assertIsNone(self.broker.control_owner_id)
+
     def test_owner_release_on_unregister_allows_next_writer(self) -> None:
         self.broker.handle_client_bytes("client-a", make_admin_write_frame())
         self.broker.unregister_client("client-a")
@@ -400,6 +421,16 @@ class MeshtasticBrokerTests(unittest.TestCase):
         self.assertEqual(snapshot["last_admin_response_owner"], "127.0.0.1:5001")
         self.assertEqual(snapshot["control_session_confirmed"], True)
         self.assertGreaterEqual(snapshot["control_session_expires_in"], 20.0)
+
+    def test_invalid_radio_admin_payload_is_ignored_without_resetting_state(self) -> None:
+        self.broker.handle_client_bytes("client-a", make_admin_write_frame())
+
+        observed = self.broker.observe_radio_bytes(make_fromradio_invalid_admin_frame())
+        snapshot = self.broker.snapshot()
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(snapshot["observed_admin_responses"], 0)
+        self.assertEqual(snapshot["control_owner"], "127.0.0.1:5001")
 
     def test_unconfirmed_control_owner_expires_and_next_writer_can_claim(self) -> None:
         self.broker.handle_client_bytes("client-a", make_admin_write_frame())
@@ -625,6 +656,25 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             tick_thread.join(timeout=1.0)
 
         self.assertGreaterEqual(len(output_file.read_text(encoding="utf-8").splitlines()), 2)
+
+    def test_client_reader_unblocks_when_proxy_stops_during_serial_outage(self) -> None:
+        client_sock, peer_sock = socket.socketpair()
+        try:
+            client = self.proxy.register_client(client_sock, ("127.0.0.1", 6200))
+            self.proxy.serial_ready.clear()
+
+            thread = threading.Thread(target=self.proxy.client_reader_loop, args=(client,), daemon=True)
+            thread.start()
+
+            peer_sock.sendall(make_text_frame())
+            wait_until(lambda: thread.is_alive())
+
+            self.proxy.stop()
+            thread.join(timeout=1.0)
+
+            self.assertFalse(thread.is_alive())
+        finally:
+            peer_sock.close()
 
     def test_private_app_json_type_routes_to_specific_handler(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "private-app-output.txt"

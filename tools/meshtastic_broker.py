@@ -98,7 +98,11 @@ def is_control_mesh_packet(packet: mesh_pb2.MeshPacket) -> bool:
         return False
 
     admin_message = admin_pb2.AdminMessage()
-    admin_message.ParseFromString(packet.decoded.payload)
+    try:
+        admin_message.ParseFromString(packet.decoded.payload)
+    except Exception:
+        LOGGER.debug("ignoring undecodable ADMIN_APP client payload", exc_info=True)
+        return False
     operation = admin_message.WhichOneof("payload_variant")
     if operation is None:
         return False
@@ -205,7 +209,11 @@ class MeshtasticBroker:
             return
 
         admin_message = admin_pb2.AdminMessage()
-        admin_message.ParseFromString(packet.decoded.payload)
+        try:
+            admin_message.ParseFromString(packet.decoded.payload)
+        except Exception:
+            self.logger.debug("ignoring undecodable ADMIN_APP radio payload", exc_info=True)
+            return
         self.observed_admin_responses += 1
         self.last_admin_response_owner = self._owner_label() if self.control_owner_id is not None else None
         if admin_message.session_passkey:

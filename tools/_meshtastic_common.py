@@ -116,18 +116,33 @@ def connect_interface_for_target(
     serial_connect_now: bool = True,
     tcp_connect_now: bool = True,
 ):
+    def prepare_interface(interface):
+        if getattr(interface, "nodes", None) is None:
+            interface.nodes = {}
+        if getattr(interface, "nodesByNum", None) is None:
+            interface.nodesByNum = {}
+        return interface
+
     if target.mode == "tcp":
         if tcp_factory is None:
             from meshtastic.tcp_interface import TCPInterface
 
             tcp_factory = TCPInterface
-        return tcp_factory(target.host, portNumber=target.tcp_port, connectNow=tcp_connect_now)
+        interface = prepare_interface(tcp_factory(target.host, portNumber=target.tcp_port, connectNow=False))
+        if getattr(interface, "socket", None) is None and hasattr(interface, "myConnect"):
+            interface.myConnect()
+        if tcp_connect_now:
+            interface.connect()
+        return interface
 
     if serial_factory is None:
         from meshtastic.serial_interface import SerialInterface
 
         serial_factory = SerialInterface
-    return serial_factory(target.serial_port, connectNow=serial_connect_now)
+    interface = prepare_interface(serial_factory(target.serial_port, connectNow=False))
+    if serial_connect_now:
+        interface.connect()
+    return interface
 
 
 def connection_error_message(target, exc: Exception) -> str:

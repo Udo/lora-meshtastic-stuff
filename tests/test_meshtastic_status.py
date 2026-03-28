@@ -235,6 +235,52 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         self.assertIn("Proxy config loaded", rendered)
         self.assertIn("/tmp/meshtastic/service.env", rendered)
 
+    def test_render_summary_tolerates_partial_interface_state(self) -> None:
+        partial_iface = type(
+            "PartialInterface",
+            (),
+            {
+                "metadata": None,
+                "myInfo": None,
+                "localNode": None,
+                "nodes": None,
+            },
+        )()
+        output = io.StringIO()
+
+        with mock.patch.object(
+            status,
+            "summarize_proxy_runtime",
+            return_value={
+                "running": False,
+                "reachable": False,
+                "connection_status": "stopped",
+                "host": "127.0.0.1",
+                "tcp_port": 4403,
+                "config_file_loaded": False,
+                "config_file": None,
+                "persistent_config_file": None,
+            },
+        ):
+            with contextlib.redirect_stdout(output):
+                status.render_summary(partial_iface)
+
+        rendered = output.getvalue()
+        self.assertIn("Meshtastic Summary", rendered)
+        self.assertIn("Target", rendered)
+        self.assertIn("Node ID", rendered)
+
+    def test_render_config_tolerates_missing_local_node(self) -> None:
+        partial_iface = type("PartialInterface", (), {"localNode": None})()
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            status.render_config(partial_iface, [])
+
+        rendered = output.getvalue()
+        self.assertIn('"local": {}', rendered)
+        self.assertIn('"module": {}', rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

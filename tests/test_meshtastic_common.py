@@ -128,6 +128,63 @@ class ResolveMeshtasticTargetTests(unittest.TestCase):
         self.assertEqual(summary["config_file_loaded"], False)
         self.assertEqual(summary["persistent_config_file"], str(service_config_path))
 
+    def test_connect_interface_for_tcp_seeds_node_caches_before_connect(self) -> None:
+        events: list[str] = []
+
+        class FakeTcpInterface:
+            def __init__(self, host: str, *, portNumber: int, connectNow: bool) -> None:
+                self.host = host
+                self.portNumber = portNumber
+                self.connectNow = connectNow
+                self.socket = None
+                self.nodes = None
+                self.nodesByNum = None
+
+            def myConnect(self) -> None:
+                events.append(f"myConnect nodes={self.nodes!r} nodesByNum={self.nodesByNum!r}")
+                self.socket = object()
+
+            def connect(self) -> None:
+                events.append(f"connect nodes={self.nodes!r} nodesByNum={self.nodesByNum!r}")
+
+        target = common.MeshtasticTarget(mode="tcp", source="test", host="127.0.0.1", tcp_port=4403)
+
+        iface = common.connect_interface_for_target(target, tcp_factory=FakeTcpInterface)
+
+        self.assertIsInstance(iface.nodes, dict)
+        self.assertIsInstance(iface.nodesByNum, dict)
+        self.assertEqual(
+            events,
+            [
+                "myConnect nodes={} nodesByNum={}",
+                "connect nodes={} nodesByNum={}",
+            ],
+        )
+
+    def test_connect_interface_for_serial_seeds_node_caches_before_manual_connect(self) -> None:
+        class FakeSerialInterface:
+            def __init__(self, dev_path: str, *, connectNow: bool) -> None:
+                self.dev_path = dev_path
+                self.connectNow = connectNow
+                self.nodes = None
+                self.nodesByNum = None
+                self.connect_calls = 0
+
+            def connect(self) -> None:
+                self.connect_calls += 1
+
+        target = common.MeshtasticTarget(mode="serial", source="test", serial_port="/dev/ttyUSB9")
+
+        iface = common.connect_interface_for_target(
+            target,
+            serial_factory=FakeSerialInterface,
+            serial_connect_now=False,
+        )
+
+        self.assertIsInstance(iface.nodes, dict)
+        self.assertIsInstance(iface.nodesByNum, dict)
+        self.assertEqual(iface.connect_calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,6 +104,28 @@ class MeshtasticMessagesTests(unittest.TestCase):
         self.assertEqual(record["scope"], "private")
         self.assertEqual(record["text"], "secret hello")
 
+    def test_lookup_identity_tolerates_missing_node_cache(self) -> None:
+        iface = type("PartialInterface", (), {"nodes": None, "myInfo": None})()
+
+        identity = messages.lookup_identity(iface, node_num=456, node_id="!0439d098")
+
+        self.assertEqual(identity.node_id, "!0439d098")
+        self.assertEqual(identity.node_num, 456)
+
+    def test_find_local_identity_tolerates_missing_myinfo(self) -> None:
+        iface = type("PartialInterface", (), {"nodes": None, "myInfo": None})()
+
+        identity = messages.find_local_identity(iface)
+
+        self.assertEqual(identity.node_id, "-")
+        self.assertIsNone(identity.node_num)
+
+    def test_resolve_peer_reports_empty_node_db_cleanly(self) -> None:
+        iface = type("PartialInterface", (), {"nodes": None, "myInfo": None})()
+
+        with self.assertRaisesRegex(ValueError, "no known nodes"):
+            messages.resolve_peer(iface, "!0439d098")
+
     def test_format_log_line_is_grep_friendly(self) -> None:
         line = messages.format_log_line(
             {

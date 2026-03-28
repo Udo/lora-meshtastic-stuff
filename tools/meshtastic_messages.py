@@ -329,20 +329,31 @@ def node_identity_from_node(node: dict[str, object]) -> NodeIdentity:
     )
 
 
+def interface_nodes(iface) -> dict[str, dict[str, object]]:
+    nodes = getattr(iface, "nodes", None)
+    return nodes if isinstance(nodes, dict) else {}
+
+
+def interface_local_node_num(iface) -> int | None:
+    my_info = getattr(iface, "myInfo", None)
+    node_num = getattr(my_info, "my_node_num", None)
+    return node_num if isinstance(node_num, int) else None
+
+
 def known_nodes(iface) -> list[NodeIdentity]:
-    return [node_identity_from_node(node) for node in iface.nodes.values()]
+    return [node_identity_from_node(node) for node in interface_nodes(iface).values()]
 
 
 def find_local_identity(iface) -> NodeIdentity:
-    local_num = iface.myInfo.my_node_num
-    for node in iface.nodes.values():
+    local_num = interface_local_node_num(iface)
+    for node in interface_nodes(iface).values():
         if node.get("num") == local_num:
             return node_identity_from_node(node)
     return NodeIdentity(node_id="-", node_num=local_num, long_name="", short_name="")
 
 
 def lookup_identity(iface, *, node_num: int | None = None, node_id: str = "") -> NodeIdentity:
-    for node in iface.nodes.values():
+    for node in interface_nodes(iface).values():
         if node_num is not None and node.get("num") == node_num:
             return node_identity_from_node(node)
         user = node.get("user", {})
@@ -381,6 +392,9 @@ def resolve_peer(iface, selector: str) -> NodeIdentity:
         raise ValueError("peer selector must not be empty")
 
     nodes = known_nodes(iface)
+    if not nodes:
+        raise ValueError("no known nodes are available yet")
+
     exact_matches = [identity for identity in nodes if _identity_matches_exact(identity, selector)]
     if len(exact_matches) == 1:
         return exact_matches[0]

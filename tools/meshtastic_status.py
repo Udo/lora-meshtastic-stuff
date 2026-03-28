@@ -56,6 +56,9 @@ def to_dict(message) -> dict:
 
 
 def protobuf_to_plain(message) -> dict:
+    if message is None or not hasattr(message, "DESCRIPTOR"):
+        return {}
+
     result: dict[str, object] = {}
     for field in message.DESCRIPTOR.fields:
         value = getattr(message, field.name)
@@ -90,6 +93,8 @@ def config_scalar(section: dict, key: str, raw_section, raw_field: str):
     value = section.get(key)
     if value not in (None, ""):
         return value
+    if raw_section is None:
+        return None
     return getattr(raw_section, raw_field)
 
 
@@ -97,8 +102,21 @@ def config_enum(section: dict, key: str, raw_section, raw_field: str) -> str:
     value = section.get(key)
     if value not in (None, ""):
         return str(value)
+    if raw_section is None or not hasattr(raw_section, "DESCRIPTOR"):
+        return "-"
     field = raw_section.DESCRIPTOR.fields_by_name[raw_field]
     return enum_name(field.enum_type, getattr(raw_section, raw_field))
+
+
+def iface_nodes(iface) -> dict[str, dict[str, object]]:
+    nodes = getattr(iface, "nodes", None)
+    return nodes if isinstance(nodes, dict) else {}
+
+
+def iface_local_node_num(iface) -> int | None:
+    my_info = getattr(iface, "myInfo", None)
+    node_num = getattr(my_info, "my_node_num", None)
+    return node_num if isinstance(node_num, int) else None
 
 
 def format_fixed_position(local_node: dict, fixed_position: object) -> str:
@@ -119,25 +137,32 @@ def format_fixed_position(local_node: dict, fixed_position: object) -> str:
 
 
 def find_local_node(iface) -> dict:
-    return next((node for node in iface.nodes.values() if node.get("num") == iface.myInfo.my_node_num), {})
+    local_num = iface_local_node_num(iface)
+    return next((node for node in iface_nodes(iface).values() if node.get("num") == local_num), {})
 
 
 def render_summary(iface) -> None:
     local_node = find_local_node(iface)
     user = local_node.get("user", {})
     metrics = local_node.get("deviceMetrics", {})
-    metadata = to_dict(iface.metadata)
-    my_info = to_dict(iface.myInfo)
-    local_config = to_dict(iface.localNode.localConfig)
-    local_config_raw = iface.localNode.localConfig
+    metadata = to_dict(getattr(iface, "metadata", None))
+    my_info = to_dict(getattr(iface, "myInfo", None))
+    local_node_iface = getattr(iface, "localNode", None)
+    local_config_raw = getattr(local_node_iface, "localConfig", None)
+    local_config = to_dict(local_config_raw)
     device = local_config.get("device", {})
     lora = local_config.get("lora", {})
     network = local_config.get("network", {})
     position = local_config.get("position", {})
     bluetooth = local_config.get("bluetooth", {})
-    preset_value = config_enum(lora, "modemPreset", local_config_raw.lora, "modem_preset")
-    role_value = config_enum(device, "role", local_config_raw.device, "role")
-    fixed_position = config_scalar(position, "fixedPosition", local_config_raw.position, "fixed_position")
+    lora_raw = getattr(local_config_raw, "lora", None)
+    device_raw = getattr(local_config_raw, "device", None)
+    position_raw = getattr(local_config_raw, "position", None)
+    network_raw = getattr(local_config_raw, "network", None)
+    bluetooth_raw = getattr(local_config_raw, "bluetooth", None)
+    preset_value = config_enum(lora, "modemPreset", lora_raw, "modem_preset")
+    role_value = config_enum(device, "role", device_raw, "role")
+    fixed_position = config_scalar(position, "fixedPosition", position_raw, "fixed_position")
 
     heading("Meshtastic Summary")
     kv("Target", interface_target(iface))
@@ -156,11 +181,11 @@ def render_summary(iface) -> None:
     kv("Fixed position", format_fixed_position(local_node, fixed_position))
     kv("Region", lora.get("region"))
     kv("Preset", preset_value)
-    kv("Tx power", config_scalar(lora, "txPower", local_config_raw.lora, "tx_power"))
-    kv("WiFi enabled", config_scalar(network, "wifiEnabled", local_config_raw.network, "wifi_enabled"))
-    kv("WiFi SSID", config_scalar(network, "wifiSsid", local_config_raw.network, "wifi_ssid"))
-    kv("Bluetooth enabled", config_scalar(bluetooth, "enabled", local_config_raw.bluetooth, "enabled"))
-    kv("Primary channel URL", iface.localNode.getURL())
+    kv("Tx power", config_scalar(lora, "txPower", lora_raw, "tx_power"))
+    kv("WiFi enabled", config_scalar(network, "wifiEnabled", network_raw, "wifi_enabled"))
+    kv("WiFi SSID", config_scalar(network, "wifiSsid", network_raw, "wifi_ssid"))
+    kv("Bluetooth enabled", config_scalar(bluetooth, "enabled", bluetooth_raw, "enabled"))
+    kv("Primary channel URL", local_node_iface.getURL() if local_node_iface is not None and hasattr(local_node_iface, "getURL") else "-")
 
     proxy_runtime = summarize_proxy_runtime()
     endpoint_state = f"{proxy_runtime['host']}:{proxy_runtime['tcp_port']}"
@@ -175,8 +200,9 @@ def render_summary(iface) -> None:
 
 
 def render_config(iface, sections: list[str]) -> None:
-    local_config = protobuf_to_plain(iface.localNode.localConfig)
-    module_config = protobuf_to_plain(iface.localNode.moduleConfig)
+    local_node_iface = getattr(iface, "localNode", None)
+    local_config = protobuf_to_plain(getattr(local_node_iface, "localConfig", None))
+    module_config = protobuf_to_plain(getattr(local_node_iface, "moduleConfig", None))
     combined = {"local": local_config, "module": module_config}
 
     heading("Configuration")
@@ -199,7 +225,7 @@ def render_nodes(iface) -> None:
     heading("Known Nodes")
     header = f"{'ID':<12} {'Long Name':<24} {'Short':<8} {'Model':<14} {'Bat%':>5} {'Volt':>6} {'Uptime':>8}"
     print(style(PALETTE, PALETTE.bold, header))
-    for node in sorted(iface.nodes.values(), key=lambda item: item.get("num", 0)):
+    for node in sorted(iface_nodes(iface).values(), key=lambda item: item.get("num", 0)):
         user = node.get("user", {})
         metrics = node.get("deviceMetrics", {})
         print(
@@ -214,10 +240,10 @@ def render_nodes(iface) -> None:
 
 
 def collect_neighbor_rows(iface) -> list[dict[str, object]]:
-    local_num = iface.myInfo.my_node_num
+    local_num = iface_local_node_num(iface)
     rows: list[dict[str, object]] = []
 
-    for node in iface.nodes.values():
+    for node in iface_nodes(iface).values():
         if node.get("num") == local_num:
             continue
 
@@ -280,10 +306,10 @@ TELEMETRY_FIELD_MAP = {
 
 
 def collect_proximity_candidates(iface, include_multihop: bool = False) -> list[dict[str, object]]:
-    local_num = iface.myInfo.my_node_num
+    local_num = iface_local_node_num(iface)
     candidates: list[dict[str, object]] = []
 
-    for node in iface.nodes.values():
+    for node in iface_nodes(iface).values():
         if node.get("num") == local_num:
             continue
 
@@ -385,7 +411,7 @@ def collect_cached_telemetry_candidates(iface, telemetry_type: str, include_mult
 
 def cached_telemetry_for_node(iface, node_id: str, telemetry_type: str) -> dict[str, object] | None:
     telemetry_field = TELEMETRY_FIELD_MAP[telemetry_type]
-    for node in iface.nodes.values():
+    for node in iface_nodes(iface).values():
         if node.get("user", {}).get("id") == node_id:
             telemetry = node.get(telemetry_field)
             return telemetry if isinstance(telemetry, dict) else None

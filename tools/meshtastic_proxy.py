@@ -40,6 +40,7 @@ CLIENT_KEEPALIVE_IDLE_SECONDS = 60
 CLIENT_KEEPALIVE_INTERVAL_SECONDS = 15
 CLIENT_KEEPALIVE_PROBES = 4
 DM_PLUGIN_DIRNAME = "DM"
+SERIAL_WAIT_SLICE_SECONDS = 0.25
 
 
 @dataclass(eq=False)
@@ -612,8 +613,13 @@ class MeshtasticProxy:
                 if not decision.serial_chunks:
                     continue
                 forwarded_frames = self._handle_client_plugins(client, decision.forwarded_frames)
-                self.serial_ready.wait()
-                if self.stop_event.is_set():
+                while (
+                    not self.stop_event.is_set()
+                    and client in self.clients
+                    and not self.serial_ready.wait(timeout=SERIAL_WAIT_SLICE_SECONDS)
+                ):
+                    continue
+                if self.stop_event.is_set() or client not in self.clients:
                     break
                 serial_chunks = [chunk for chunk in decision.serial_chunks if chunk not in decision.forwarded_frames]
                 serial_chunks.extend(forwarded_frames)
