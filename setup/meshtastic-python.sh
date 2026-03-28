@@ -95,6 +95,7 @@ Commands:
   set-modem-preset Set the LoRa modem preset on the connected node
   set-position    Set a fixed node position as latitude/longitude[/altitude]
   clear-position  Remove the configured fixed node position
+  channels        Inspect or manage channels (list|add|delete|enable|disable|set|set-url|add-url|qr|qr-all)
   set-ham         Set licensed ham ID and disable encryption
   set-wifi        Enable WiFi client mode and store SSID/PSK on the node
   status          Run the pretty Meshtastic status tool from tools/
@@ -1789,6 +1790,107 @@ telemetry() {
   status telemetry "$@"
 }
 
+channels() {
+  local action="${1:-list}"
+  local index field value url name
+
+  case "${action}" in
+    list)
+      shift || true
+      status channels "$@"
+      ;;
+    add)
+      shift
+      name="${1:-}"
+      if [[ $# -ne 1 || -z "${name}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels add <NAME>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-add "${name}"
+      ;;
+    delete|del|remove)
+      shift
+      index="${1:-}"
+      if [[ $# -ne 1 || -z "${index}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels delete <INDEX>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-index "${index}" --ch-del
+      ;;
+    enable)
+      shift
+      index="${1:-}"
+      if [[ $# -ne 1 || -z "${index}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels enable <INDEX>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-index "${index}" --ch-enable
+      ;;
+    disable)
+      shift
+      index="${1:-}"
+      if [[ $# -ne 1 || -z "${index}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels disable <INDEX>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-index "${index}" --ch-disable
+      ;;
+    set)
+      shift
+      index="${1:-}"
+      field="${2:-}"
+      value="${3:-}"
+      if [[ $# -ne 3 || -z "${index}" || -z "${field}" || -z "${value}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels set <INDEX> <FIELD> <VALUE>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-index "${index}" --ch-set "${field}" "${value}"
+      ;;
+    set-url)
+      shift
+      url="${1:-}"
+      if [[ $# -ne 1 || -z "${url}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels set-url <URL>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-set-url "${url}"
+      ;;
+    add-url)
+      shift
+      url="${1:-}"
+      if [[ $# -ne 1 || -z "${url}" ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels add-url <URL>" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --ch-add-url "${url}"
+      ;;
+    qr)
+      shift
+      if [[ $# -gt 1 ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels qr [INDEX]" >&2
+        exit 1
+      fi
+      if [[ $# -eq 1 ]]; then
+        run_meshtastic_cli --ch-index "$1" --qr
+      else
+        run_meshtastic_cli --qr
+      fi
+      ;;
+    qr-all)
+      shift || true
+      if [[ $# -ne 0 ]]; then
+        echo "Usage: setup/meshtastic-python.sh channels qr-all" >&2
+        exit 1
+      fi
+      run_meshtastic_cli --qr-all
+      ;;
+    *)
+      echo "Usage: setup/meshtastic-python.sh channels {list|add|delete|enable|disable|set|set-url|add-url|qr|qr-all} ..." >&2
+      exit 1
+      ;;
+  esac
+}
+
 monitor() {
   check_monitor_tool
   local host
@@ -2291,6 +2393,10 @@ main() {
       ;;
     clear-position)
       clear_position
+      ;;
+    channels)
+      shift
+      channels "$@"
       ;;
     set-ham)
       shift

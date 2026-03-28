@@ -39,9 +39,12 @@ Common commands:
 ./setup/meshtastic-python.sh set-modem-preset LONG_FAST
 ./setup/meshtastic-python.sh set-position 52.5200 13.4050 35
 ./setup/meshtastic-python.sh clear-position
+./setup/meshtastic-python.sh channels list
+./setup/meshtastic-python.sh channels add Friends
 ./setup/meshtastic-python.sh set-ham DO1ABC
 ./setup/meshtastic-python.sh set-wifi "YOUR_WIFI_SSID" "YOUR_WIFI_PASSWORD"
 ./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh status channels
 ./setup/meshtastic-python.sh telemetry --type environment
 ./setup/meshtastic-python.sh telemetry cached --type environment
 ./setup/meshtastic-python.sh monitor
@@ -93,7 +96,25 @@ Notes:
 - Supported roles are: `CLIENT`, `CLIENT_MUTE`, `ROUTER`, `ROUTER_CLIENT`, `REPEATER`, `TRACKER`, `SENSOR`, `TAK`, `CLIENT_HIDDEN`, `LOST_AND_FOUND`, `TAK_TRACKER`, `ROUTER_LATE`, `CLIENT_BASE`.
 - `set-position` configures a fixed latitude/longitude, with optional altitude in meters, for nodes that do not rely on live GPS.
 - `clear-position` removes any configured fixed position.
+- `channels` lists or manages configured Meshtastic channels on the local node.
 - `set-ham` sets the licensed ham identifier and follows the upstream CLI behavior of disabling encryption.
+
+Channel management examples:
+
+```bash
+./setup/meshtastic-python.sh channels list
+./setup/meshtastic-python.sh channels add Friends
+./setup/meshtastic-python.sh channels set 1 psk random
+./setup/meshtastic-python.sh channels delete 1
+./setup/meshtastic-python.sh channels qr
+./setup/meshtastic-python.sh channels qr-all
+```
+
+The status tool also exposes the configured channel list:
+
+```bash
+./setup/meshtastic-python.sh status channels
+```
 
 Meshtastic modem preset quick guide:
 

@@ -141,6 +141,75 @@ def find_local_node(iface) -> dict:
     return next((node for node in iface_nodes(iface).values() if node.get("num") == local_num), {})
 
 
+def collect_channel_rows(iface) -> list[dict[str, object]]:
+    local_node_iface = getattr(iface, "localNode", None)
+    if local_node_iface is None:
+        return []
+
+    rows_by_index: dict[int, dict[str, object]] = {}
+
+    raw_channels = getattr(local_node_iface, "channels", None)
+    if raw_channels:
+        for raw in raw_channels:
+            plain = protobuf_to_plain(raw) if hasattr(raw, "DESCRIPTOR") else (dict(raw) if isinstance(raw, dict) else {})
+            if not isinstance(plain, dict):
+                continue
+            index = plain.get("index")
+            try:
+                index_value = int(index)
+            except (TypeError, ValueError):
+                continue
+            settings = plain.get("settings")
+            settings = settings if isinstance(settings, dict) else {}
+            rows_by_index[index_value] = {
+                "index": index_value,
+                "role": plain.get("role"),
+                "name": settings.get("name", ""),
+                "channel_num": settings.get("channel_num"),
+                "id": settings.get("id"),
+                "uplink_enabled": settings.get("uplink_enabled"),
+                "downlink_enabled": settings.get("downlink_enabled"),
+            }
+
+    get_channels_with_hash = getattr(local_node_iface, "get_channels_with_hash", None)
+    if callable(get_channels_with_hash):
+        for item in get_channels_with_hash() or []:
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index")
+            try:
+                index_value = int(index)
+            except (TypeError, ValueError):
+                continue
+            row = rows_by_index.setdefault(index_value, {"index": index_value})
+            row["role"] = item.get("role", row.get("role"))
+            row["name"] = item.get("name", row.get("name", ""))
+            row["hash"] = item.get("hash")
+
+    rows = list(rows_by_index.values())
+    rows.sort(key=lambda item: int(item.get("index", 999)))
+    return rows
+
+
+def active_channel_rows(iface) -> list[dict[str, object]]:
+    return [row for row in collect_channel_rows(iface) if row.get("role") != "DISABLED"]
+
+
+def _format_channel_list(rows: list[dict[str, object]]) -> str:
+    names = [_format_channel_label(row) for row in rows]
+    return ", ".join(names) if names else "-"
+
+
+def _format_channel_label(row: dict[str, object]) -> str:
+    name = str(row.get("name") or "").strip() or "unnamed"
+    hash_value = row.get("hash")
+    try:
+        hash_int = int(hash_value)
+    except (TypeError, ValueError):
+        return name
+    return f"{name} 0x{hash_int:02X}"
+
+
 def render_summary(iface) -> None:
     local_node = find_local_node(iface)
     user = local_node.get("user", {})
@@ -186,6 +255,12 @@ def render_summary(iface) -> None:
     kv("WiFi SSID", config_scalar(network, "wifiSsid", network_raw, "wifi_ssid"))
     kv("Bluetooth enabled", config_scalar(bluetooth, "enabled", bluetooth_raw, "enabled"))
     kv("Primary channel URL", local_node_iface.getURL() if local_node_iface is not None and hasattr(local_node_iface, "getURL") else "-")
+    channels = active_channel_rows(iface)
+    primary = next((row for row in channels if row.get("role") == "PRIMARY"), None)
+    secondary = [row for row in channels if row.get("role") == "SECONDARY"]
+    kv("Channels active", len(channels))
+    kv("Primary channel", _format_channel_label(primary) if primary else "-")
+    kv("Secondary channels", _format_channel_list(secondary))
 
     proxy_runtime = summarize_proxy_runtime()
     endpoint_state = f"{proxy_runtime['host']}:{proxy_runtime['tcp_port']}"
@@ -219,6 +294,28 @@ def render_config(iface, sections: list[str]) -> None:
         else:
             selected[section] = {"error": "unknown section"}
     print(json.dumps(selected, indent=2, sort_keys=True))
+
+
+def render_channels(iface) -> None:
+    rows = collect_channel_rows(iface)
+    heading("Configured Channels")
+    kv("Configured entries", len(rows))
+    kv("Active channels", len([row for row in rows if row.get("role") != "DISABLED"]))
+    header = f"{'Idx':<4} {'Role':<10} {'Channel':<24} {'ID':<10} {'Uplink':<7} {'Downlink':<9}"
+    print(style(PALETTE, PALETTE.bold, header))
+    for row in rows:
+        uplink = row.get("uplink_enabled")
+        downlink = row.get("downlink_enabled")
+        uplink_display = "-" if uplink is None else ("yes" if uplink else "no")
+        downlink_display = "-" if downlink is None else ("yes" if downlink else "no")
+        print(
+            f"{str(row.get('index', '-')):<4} "
+            f"{str(row.get('role', '-')):10.10} "
+            f"{_format_channel_label(row):24.24} "
+            f"{str(row.get('id', '-') or '-'):10.10} "
+            f"{uplink_display:<7} "
+            f"{downlink_display:<9}"
+        )
 
 
 def render_nodes(iface) -> None:
@@ -522,6 +619,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_parser = subparsers.add_parser("config", help="Show full or selected config sections")
     config_parser.add_argument("sections", nargs="*", help="Optional config sections such as lora, network, telemetry")
 
+    subparsers.add_parser("channels", help="Show configured channels on the local node")
     subparsers.add_parser("nodes", help="Show known nodes in a compact table")
     subparsers.add_parser("neighbors", help="Show neighbor signal quality without crashing on incomplete node records")
     telemetry_parser = subparsers.add_parser("telemetry", help="Request telemetry from the closest known nodes")
@@ -575,6 +673,8 @@ def main() -> int:
             render_summary(iface)
         elif command == "config":
             render_config(iface, args.sections)
+        elif command == "channels":
+            render_channels(iface)
         elif command == "nodes":
             render_nodes(iface)
         elif command == "neighbors":

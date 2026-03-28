@@ -46,9 +46,17 @@ class FakeLocalConfig:
 class FakeLocalNode:
     def __init__(self) -> None:
         self.localConfig = FakeLocalConfig()
+        self.channels = []
 
     def getURL(self) -> str:
         return "https://mesh.example/channel"
+
+    def get_channels_with_hash(self):
+        return [
+            {"index": 0, "role": "PRIMARY", "name": "", "hash": 2},
+            {"index": 1, "role": "SECONDARY", "name": "Friends", "hash": 15},
+            {"index": 2, "role": "DISABLED", "name": "", "hash": None},
+        ]
 
 
 class FakeInterface:
@@ -227,6 +235,11 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("Meshtastic Summary", rendered)
         self.assertIn("Proxy/broker", rendered)
+        self.assertIn("Channels active", rendered)
+        self.assertIn("Primary channel", rendered)
+        self.assertIn("unnamed 0x02", rendered)
+        self.assertIn("Secondary channels", rendered)
+        self.assertIn("Friends 0x0F", rendered)
         self.assertIn("running", rendered)
         self.assertIn("Proxy endpoint", rendered)
         self.assertIn("127.0.0.1:4403 reachable", rendered)
@@ -234,6 +247,20 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         self.assertIn("connected", rendered)
         self.assertIn("Proxy config loaded", rendered)
         self.assertIn("/tmp/meshtastic/service.env", rendered)
+
+    def test_render_channels_lists_configured_channels(self) -> None:
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            status.render_channels(FakeInterface())
+
+        rendered = output.getvalue()
+        self.assertIn("Configured Channels", rendered)
+        self.assertIn("Configured entries", rendered)
+        self.assertIn("unnamed 0x02", rendered)
+        self.assertIn("Friends 0x0F", rendered)
+        self.assertIn("PRIMARY", rendered)
+        self.assertIn("SECONDARY", rendered)
 
     def test_render_summary_tolerates_partial_interface_state(self) -> None:
         partial_iface = type(

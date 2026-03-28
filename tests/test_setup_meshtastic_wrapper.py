@@ -232,6 +232,17 @@ main messages send WO67 hello mesh
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "messages:send WO67 hello mesh\n")
 
+    def test_main_dispatches_channels(self) -> None:
+        result = run_wrapper_snippet(
+            """
+channels() { printf 'channels:%s\n' "$*"; }
+main channels add Friends
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "channels:add Friends\n")
+
     def test_main_dispatches_protocol(self) -> None:
         result = run_wrapper_snippet(
             """
@@ -297,6 +308,39 @@ set_pref range_test.sender 0
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stdout, "cli:--set range_test.sender 0\n")
+
+    def test_channels_list_delegates_to_status_tool(self) -> None:
+        result = run_wrapper_snippet(
+            """
+status() { printf 'status:%s\n' "$*"; }
+channels list
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "status:channels\n")
+
+    def test_channels_add_forwards_to_meshtastic_cli(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+channels add Friends
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--ch-add Friends\n")
+
+    def test_channels_set_forwards_index_and_field(self) -> None:
+        result = run_wrapper_snippet(
+            """
+run_meshtastic_cli() { printf 'cli:%s\n' "$*"; }
+channels set 1 psk random
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "cli:--ch-index 1 --ch-set psk random\n")
 
     def test_proxy_start_manual_also_starts_protocol_sidecar(self) -> None:
         result = run_wrapper_snippet(

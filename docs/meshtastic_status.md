@@ -4,6 +4,7 @@
 
 ```bash
 ./setup/meshtastic-python.sh status summary
+./setup/meshtastic-python.sh status channels
 ./setup/meshtastic-python.sh status nodes
 ./setup/meshtastic-python.sh telemetry --type environment
 ./setup/meshtastic-python.sh telemetry cached --type environment
@@ -18,6 +19,7 @@
 ## Function
 
 - Presents a concise human-readable view of node identity, firmware, radio config, power state, and known mesh nodes.
+- Shows configured channel information, including active channel count in the summary and a dedicated `status channels` view.
 - Reports the LoRa modem preset explicitly, including default enum-backed values such as `LONG_FAST` that may be omitted from JSON-shaped config output.
 - Reports the configured device role and fixed-position state explicitly in the summary view, with coordinate context when available.
 - Can request telemetry from nearby nodes, with proximity defined by direct-neighbor preference, hop count, and observed SNR.
@@ -50,6 +52,6 @@
   - TCP mode uses `meshtastic.tcp_interface.TCPInterface`.
   - Serial mode uses `meshtastic.serial_interface.SerialInterface`.
 - Rendering path:
-  - summary/config/nodes are built directly from the protobuf-backed interface object.
+  - summary/config/channels/nodes are built directly from the protobuf-backed interface object.
   - `raw-info` and `traceroute` shell out to `python -m meshtastic` using the repo venv.
 - When the proxy is used, status reads through the brokered TCP stream rather than touching `/dev/ttyUSB0` directly.
