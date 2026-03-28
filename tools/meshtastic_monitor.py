@@ -354,13 +354,21 @@ class Monitor:
         return self.target.label
 
     def connect_interface(self):
-        return connect_interface_for_target(
+        interface = connect_interface_for_target(
             self.target,
             serial_factory=SerialInterface,
             tcp_factory=TCPInterface,
             serial_connect_now=False,
-            tcp_connect_now=True,
+            tcp_connect_now=False,
         )
+        if self.target.mode == "tcp":
+            rx_thread = getattr(interface, "_rxThread", None)
+            if rx_thread is not None and not rx_thread.is_alive():
+                rx_thread.start()
+            start_config = getattr(interface, "_startConfig", None)
+            if callable(start_config):
+                start_config()
+        return interface
 
     def run(self) -> int:
         signal.signal(signal.SIGINT, self.request_stop)

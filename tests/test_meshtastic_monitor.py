@@ -17,6 +17,45 @@ import meshtastic_monitor as monitor
 
 
 class MeshtasticMonitorTests(unittest.TestCase):
+    def test_connect_interface_starts_tcp_reader_without_waiting_for_full_handshake(self) -> None:
+        args = monitor.build_parser().parse_args([
+            "--host",
+            "127.0.0.1",
+            "--tcp-port",
+            "4403",
+        ])
+        mon = monitor.Monitor(args)
+        events: list[str] = []
+
+        class FakeThread:
+            def __init__(self) -> None:
+                self.started = False
+
+            def is_alive(self) -> bool:
+                return self.started
+
+            def start(self) -> None:
+                self.started = True
+                events.append("thread-start")
+
+        class FakeTcpInterface:
+            def __init__(self) -> None:
+                self._rxThread = FakeThread()
+
+            def _startConfig(self) -> None:
+                events.append("start-config")
+
+        fake_iface = FakeTcpInterface()
+
+        with mock.patch.object(monitor, "connect_interface_for_target", return_value=fake_iface) as connect_mock:
+            iface = mon.connect_interface()
+
+        self.assertIs(iface, fake_iface)
+        connect_mock.assert_called_once()
+        _, kwargs = connect_mock.call_args
+        self.assertFalse(kwargs["tcp_connect_now"])
+        self.assertEqual(events, ["thread-start", "start-config"])
+
     def test_should_emit_suppresses_duplicate_node_updates(self) -> None:
         args = monitor.build_parser().parse_args([])
         mon = monitor.Monitor(args)
