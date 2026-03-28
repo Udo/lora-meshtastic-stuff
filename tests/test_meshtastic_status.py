@@ -229,6 +229,11 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
                         "ignored_serial_debug_bytes": 64,
                         "invalid_radio_frames": 3,
                     },
+                    "manager_snapshot": {
+                        "manager_pid": 444,
+                        "proxy": {"running": True},
+                        "protocol": {"running": True},
+                    },
                     "config_file_loaded": True,
                     "config_file": "/tmp/meshtastic/service.env",
                     "persistent_config_file": "/tmp/meshtastic/service.env",
@@ -256,6 +261,10 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
         self.assertIn("64", rendered)
         self.assertIn("Invalid radio frames", rendered)
         self.assertIn("3", rendered)
+        self.assertIn("Runtime manager pid", rendered)
+        self.assertIn("444", rendered)
+        self.assertIn("Runtime proxy child", rendered)
+        self.assertIn("Runtime protocol child", rendered)
         self.assertIn("Proxy config loaded", rendered)
         self.assertIn("/tmp/meshtastic/service.env", rendered)
 

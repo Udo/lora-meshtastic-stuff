@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import time
+import json
 from pathlib import Path
 
 from _meshtastic_common import DEFAULT_SERIAL_PORT, DEFAULT_TCP_HOST, DEFAULT_TCP_PORT, ensure_repo_python, normalize_tcp_client_host
@@ -17,6 +18,7 @@ LOGGER = logging.getLogger("meshtastic_runtime_manager")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROXY_TOOL = REPO_ROOT / "tools" / "meshtastic_proxy.py"
 DEFAULT_PROTOCOL_TOOL = REPO_ROOT / "tools" / "meshtastic_protocol.py"
+DEFAULT_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "runtime-manager-status.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--connect-host", default=DEFAULT_TCP_HOST, help="TCP host local tools should use to reach the proxy")
     parser.add_argument("--listen-port", type=int, default=DEFAULT_TCP_PORT, help="TCP port for proxy and protocol clients")
     parser.add_argument("--status-file", help="Proxy status JSON path")
+    parser.add_argument("--manager-status-file", default=str(DEFAULT_STATUS_FILE), help="Runtime manager status JSON path")
     parser.add_argument("--config-file", help="Config file path loaded by the caller")
     parser.add_argument("--protocol-log-name", default="protocol", help="Protocol log name")
     parser.add_argument("--protocol-connect-wait-seconds", type=float, default=20.0, help="Seconds the protocol logger waits for TCP readiness")
@@ -43,12 +46,41 @@ class RuntimeManager:
         self.proxy_process: subprocess.Popen[str] | None = None
         self.protocol_process: subprocess.Popen[str] | None = None
 
+    def write_status(self) -> None:
+        status_path = Path(self.args.manager_status_file)
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def process_state(process: subprocess.Popen[str] | None) -> dict[str, object]:
+            if process is None:
+                return {"running": False, "pid": None, "returncode": None}
+            returncode = process.poll()
+            return {
+                "running": returncode is None,
+                "pid": process.pid,
+                "returncode": returncode,
+            }
+
+        payload = {
+            "manager_pid": os.getpid(),
+            "listen_host": self.args.listen_host,
+            "connect_host": normalize_tcp_client_host(self.args.connect_host),
+            "listen_port": self.args.listen_port,
+            "proxy": process_state(self.proxy_process),
+            "protocol": process_state(self.protocol_process),
+        }
+        temp_path = status_path.with_suffix(status_path.suffix + ".tmp")
+        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temp_path.replace(status_path)
+
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
+        self.write_status()
 
     def _spawn(self, name: str, command: list[str]) -> subprocess.Popen[str]:
         LOGGER.info("starting %s: %s", name, " ".join(command))
-        return subprocess.Popen(command)
+        process = subprocess.Popen(command)
+        self.write_status()
+        return process
 
     def start_proxy(self) -> subprocess.Popen[str]:
         command = [
@@ -104,6 +136,7 @@ class RuntimeManager:
         LOGGER.warning("forcing %s to stop", name)
         process.kill()
         process.wait(timeout=2.0)
+        self.write_status()
 
     def run(self) -> int:
         signal.signal(signal.SIGINT, self.request_stop)
@@ -111,6 +144,7 @@ class RuntimeManager:
 
         self.start_proxy()
         self.start_protocol()
+        self.write_status()
 
         exit_code = 0
         try:
@@ -121,12 +155,14 @@ class RuntimeManager:
                     proxy_code = proxy_process.poll()
                     if proxy_code is not None:
                         LOGGER.error("proxy exited with status %s", proxy_code)
+                        self.write_status()
                         exit_code = proxy_code or 1
                         break
                 if protocol_process is not None:
                     protocol_code = protocol_process.poll()
                     if protocol_code is not None:
                         LOGGER.warning("protocol exited with status %s; restarting", protocol_code)
+                        self.write_status()
                         if self.stop_requested:
                             break
                         time.sleep(1.0)
@@ -135,6 +171,7 @@ class RuntimeManager:
         finally:
             self.stop_process("protocol", self.protocol_process)
             self.stop_process("proxy", self.proxy_process)
+            self.write_status()
         return exit_code
 
 

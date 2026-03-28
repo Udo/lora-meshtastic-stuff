@@ -723,6 +723,9 @@ read_proxy_status_field() {
         dropped_radio_bytes) printf '17\n' ;;
         ignored_serial_debug_bytes) printf '64\n' ;;
         invalid_radio_frames) printf '3\n' ;;
+        manager_pid) printf '444\n' ;;
+        proxy.running) printf 'true\n' ;;
+        protocol.running) printf 'true\n' ;;
         *) return 1 ;;
     esac
 }
@@ -734,6 +737,9 @@ proxy_status
                 self.assertIn("  Dropped radio bytes: 17\n", result.stdout)
                 self.assertIn("  Ignored serial debug bytes: 64\n", result.stdout)
                 self.assertIn("  Invalid radio frames: 3\n", result.stdout)
+                self.assertIn("  Runtime manager pid: 444\n", result.stdout)
+                self.assertIn("  Runtime proxy child: true\n", result.stdout)
+                self.assertIn("  Runtime protocol child: true\n", result.stdout)
 
     def test_have_systemctl_user_requires_user_bus_environment(self) -> None:
         result = run_wrapper_snippet(

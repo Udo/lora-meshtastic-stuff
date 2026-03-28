@@ -254,6 +254,11 @@ class MeshtasticBroker:
         if ignored_len <= 0:
             return
 
+        for chunk in raw_chunks:
+            sample_text = raw_chunk_sample_text(chunk)
+            if sample_text:
+                self.logger.info("uart debug: %s", sample_text)
+
         now = self.clock()
         if now - self._last_serial_debug_log_at < MALFORMED_RADIO_LOG_INTERVAL_SECONDS:
             self._suppressed_serial_debug_chunks += len(raw_chunks)

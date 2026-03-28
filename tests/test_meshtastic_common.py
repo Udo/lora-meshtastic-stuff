@@ -98,21 +98,24 @@ class ResolveMeshtasticTargetTests(unittest.TestCase):
     def test_summarize_proxy_runtime_reports_loaded_config_and_connection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             status_path = pathlib.Path(temp_dir) / "proxy-status.json"
+            manager_status_path = pathlib.Path(temp_dir) / "runtime-manager-status.json"
             service_config_path = pathlib.Path(temp_dir) / "service.env"
             service_config_path.write_text("MESHTASTIC_PORT=/dev/ttyUSB0\n", encoding="utf-8")
             status_path.write_text(
                 '{"listen_host": "127.0.0.1", "listen_port": 4403, "pid": ' + str(os.getpid()) + ', "serial_connected": true, "config_file": ' + json.dumps(str(service_config_path)) + '}\n',
                 encoding="utf-8",
             )
+            manager_status_path.write_text('{"manager_pid": 999, "proxy": {"running": true}, "protocol": {"running": true}}\n', encoding="utf-8")
 
             with mock.patch.object(common, "tcp_endpoint_ready", return_value=True):
-                summary = common.summarize_proxy_runtime(status_path, service_config_path)
+                summary = common.summarize_proxy_runtime(status_path, service_config_path, manager_status_path)
 
         self.assertEqual(summary["running"], True)
         self.assertEqual(summary["reachable"], True)
         self.assertEqual(summary["connection_status"], "connected")
         self.assertEqual(summary["config_file"], str(service_config_path))
         self.assertEqual(summary["config_file_loaded"], True)
+        self.assertEqual(summary["manager_snapshot"]["manager_pid"], 999)
 
     def test_summarize_proxy_runtime_reports_stopped_without_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

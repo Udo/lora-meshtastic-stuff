@@ -260,6 +260,7 @@ def render_summary(iface) -> None:
     kv("Proxy endpoint", endpoint_state)
     kv("Proxy connection", proxy_runtime["connection_status"])
     proxy_snapshot = proxy_runtime.get("snapshot") if isinstance(proxy_runtime, dict) else {}
+    manager_snapshot = proxy_runtime.get("manager_snapshot") if isinstance(proxy_runtime, dict) else {}
     if isinstance(proxy_snapshot, dict):
         dropped_radio_bytes = proxy_snapshot.get("dropped_radio_bytes")
         ignored_serial_debug_bytes = proxy_snapshot.get("ignored_serial_debug_bytes")
@@ -270,6 +271,12 @@ def render_summary(iface) -> None:
             kv("Ignored serial debug bytes", ignored_serial_debug_bytes)
         if invalid_radio_frames is not None:
             kv("Invalid radio frames", invalid_radio_frames)
+    if isinstance(manager_snapshot, dict) and manager_snapshot:
+        proxy_child = manager_snapshot.get("proxy") if isinstance(manager_snapshot.get("proxy"), dict) else {}
+        protocol_child = manager_snapshot.get("protocol") if isinstance(manager_snapshot.get("protocol"), dict) else {}
+        kv("Runtime manager pid", manager_snapshot.get("manager_pid"))
+        kv("Runtime proxy child", "running" if proxy_child.get("running") else "stopped")
+        kv("Runtime protocol child", "running" if protocol_child.get("running") else "stopped")
     if proxy_runtime["config_file_loaded"]:
         kv("Proxy config loaded", proxy_runtime["config_file"])
     elif proxy_runtime["persistent_config_file"]:

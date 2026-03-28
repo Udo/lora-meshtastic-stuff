@@ -46,6 +46,7 @@ PROTOCOL_LOG_NAME="${MESHTASTIC_PROTOCOL_LOG_NAME:-protocol}"
 PROXY_PID_FILE="${RUNTIME_DIR}/proxy.pid"
 PROXY_LOG_FILE="${RUNTIME_DIR}/proxy.log"
 PROXY_STATUS_FILE="${RUNTIME_DIR}/proxy-status.json"
+RUNTIME_MANAGER_STATUS_FILE="${RUNTIME_DIR}/runtime-manager-status.json"
 PROTOCOL_PID_FILE="${RUNTIME_DIR}/protocol.pid"
 PROTOCOL_RUNNER_LOG_FILE="${RUNTIME_DIR}/protocol-runner.log"
 PROXY_SYSTEMD_UNIT="meshtastic-proxy.service"
@@ -1260,24 +1261,41 @@ proxy_autostart_status() {
 read_proxy_status_field() {
   local field_path="${1}"
 
-  if [[ ! -f "${PROXY_STATUS_FILE}" ]]; then
+  if [[ ! -f "${PROXY_STATUS_FILE}" && ! -f "${RUNTIME_MANAGER_STATUS_FILE}" ]]; then
     return 1
   fi
 
-  run_system_python - "${PROXY_STATUS_FILE}" "${field_path}" <<'PY'
+  run_system_python - "${PROXY_STATUS_FILE}" "${RUNTIME_MANAGER_STATUS_FILE}" "${field_path}" <<'PY'
 import json
 import sys
 
-status_path = sys.argv[1]
-field_path = sys.argv[2].split('.')
+proxy_status_path = sys.argv[1]
+manager_status_path = sys.argv[2]
+field_path = sys.argv[3].split('.')
 
-with open(status_path, encoding='utf-8') as handle:
-    value = json.load(handle)
+sources = []
+for candidate in (proxy_status_path, manager_status_path):
+  try:
+    with open(candidate, encoding='utf-8') as handle:
+      sources.append(json.load(handle))
+  except OSError:
+    continue
+  except json.JSONDecodeError:
+    continue
 
-for part in field_path:
+for source in sources:
+  value = source
+  for part in field_path:
+    if not isinstance(value, dict):
+      value = None
+      break
     value = value.get(part)
     if value is None:
-        raise SystemExit(1)
+      break
+  if value is not None:
+    break
+else:
+  raise SystemExit(1)
 
 if isinstance(value, bool):
     print('true' if value else 'false')
@@ -2137,7 +2155,7 @@ proxy_stop() {
 }
 
 proxy_status() {
-  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes ignored_serial_debug_bytes invalid_radio_frames
+  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes ignored_serial_debug_bytes invalid_radio_frames runtime_manager_pid runtime_proxy_child runtime_protocol_child
   json_output="${1:-}"
   manager="$(proxy_manager_label)"
 
@@ -2160,6 +2178,9 @@ proxy_status() {
     dropped_radio_bytes="$(read_proxy_status_field dropped_radio_bytes || true)"
     ignored_serial_debug_bytes="$(read_proxy_status_field ignored_serial_debug_bytes || true)"
     invalid_radio_frames="$(read_proxy_status_field invalid_radio_frames || true)"
+    runtime_manager_pid="$(read_proxy_status_field manager_pid || true)"
+    runtime_proxy_child="$(read_proxy_status_field proxy.running || true)"
+    runtime_protocol_child="$(read_proxy_status_field protocol.running || true)"
     if [[ -n "${clients}" ]]; then
       printf '  Clients: %s\n' "${clients}"
     fi
@@ -2195,6 +2216,15 @@ proxy_status() {
     fi
     if [[ -n "${invalid_radio_frames}" ]]; then
       printf '  Invalid radio frames: %s\n' "${invalid_radio_frames}"
+    fi
+    if [[ -n "${runtime_manager_pid}" ]]; then
+      printf '  Runtime manager pid: %s\n' "${runtime_manager_pid}"
+    fi
+    if [[ -n "${runtime_proxy_child}" ]]; then
+      printf '  Runtime proxy child: %s\n' "${runtime_proxy_child}"
+    fi
+    if [[ -n "${runtime_protocol_child}" ]]; then
+      printf '  Runtime protocol child: %s\n' "${runtime_protocol_child}"
     fi
     if [[ -n "${admin_owner}" ]]; then
       printf '  Last admin owner: %s\n' "${admin_owner}"

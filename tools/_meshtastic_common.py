@@ -13,6 +13,7 @@ DEFAULT_TCP_HOST = "127.0.0.1"
 DEFAULT_TCP_PORT = 4403
 PROXY_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "proxy-status.json"
 SERVICE_CONFIG_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "service.env"
+RUNTIME_MANAGER_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "runtime-manager-status.json"
 WILDCARD_TCP_HOSTS = {"", "0.0.0.0", "::", "[::]", "*"}
 
 
@@ -264,10 +265,13 @@ def tcp_endpoint_ready(host: str, port: int, timeout: float = 1.0) -> bool:
 def summarize_proxy_runtime(
     status_file: Path | None = None,
     service_config_file: Path | None = None,
+    runtime_manager_status_file: Path | None = None,
 ) -> dict[str, object]:
     status_file = status_file or PROXY_STATUS_FILE
     service_config_file = service_config_file or SERVICE_CONFIG_FILE
+    runtime_manager_status_file = runtime_manager_status_file or RUNTIME_MANAGER_STATUS_FILE
     snapshot = load_proxy_status(status_file)
+    manager_snapshot = load_proxy_status(runtime_manager_status_file)
 
     host = normalize_tcp_client_host(env_proxy_host() or snapshot.get("listen_host"))
     listen_port = snapshot.get("listen_port")
@@ -298,8 +302,11 @@ def summarize_proxy_runtime(
         "tcp_port": tcp_port,
         "pid": snapshot.get("pid"),
         "snapshot": snapshot,
+        "manager_snapshot": manager_snapshot,
         "snapshot_exists": status_file.exists(),
         "snapshot_file": str(status_file),
+        "manager_snapshot_exists": runtime_manager_status_file.exists(),
+        "manager_snapshot_file": str(runtime_manager_status_file),
         "config_file": config_file,
         "config_file_loaded": config_file is not None,
         "persistent_config_file": persistent_config_file,
