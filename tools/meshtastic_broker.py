@@ -464,7 +464,7 @@ class MeshtasticBroker:
 
         if variant in {"heartbeat", "disconnect"}:
             if self.host_session_owner_id is None or (
-                variant == "heartbeat" and self._should_claim_host_session_owner(client_id)
+                variant == "heartbeat" and self._should_preempt_host_session_owner(client_id)
             ):
                 self._claim_host_session_owner(client_id)
                 self.logger.info("host session claimed by %s via %s", self._client_label(client_id), variant)
@@ -552,6 +552,11 @@ class MeshtasticBroker:
         if not current_is_loopback and candidate_is_loopback:
             return False
         return True
+
+    def _should_preempt_host_session_owner(self, client_id: str) -> bool:
+        if self.host_session_owner_id is None or self.host_session_owner_id == client_id:
+            return True
+        return self._is_loopback_client(self.host_session_owner_id) and not self._is_loopback_client(client_id)
 
     def _refresh_host_session_owner_lease(self) -> None:
         if self.host_session_owner_id is None:

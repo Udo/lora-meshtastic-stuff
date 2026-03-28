@@ -60,9 +60,9 @@ def make_admin_read_frame() -> bytes:
     return make_frame(to_radio)
 
 
-def make_want_config_frame() -> bytes:
+def make_want_config_frame(config_id: int = 123456) -> bytes:
     to_radio = mesh_pb2.ToRadio()
-    to_radio.want_config_id = 123456
+    to_radio.want_config_id = config_id
     return make_frame(to_radio)
 
 
@@ -536,6 +536,23 @@ class MeshtasticBrokerTests(unittest.TestCase):
 
         self.assertEqual(len(result.serial_chunks), 1)
         self.assertGreater(self.broker.host_session_expires_at, first_expiry)
+
+    def test_non_loopback_client_preempts_loopback_host_session(self) -> None:
+        self.broker.register_client("client-c", "10.4.5.165:50354")
+        self.broker.handle_client_bytes("client-a", make_want_config_frame())
+
+        result = self.broker.handle_client_bytes("client-c", make_want_config_frame(456))
+
+        self.assertEqual(len(result.serial_chunks), 1)
+        self.assertEqual(result.direct_chunks, [])
+        self.assertEqual(self.broker.host_session_owner_id, "client-c")
+
+        loopback_heartbeat = self.broker.handle_client_bytes("client-a", make_heartbeat_frame())
+        self.assertEqual(loopback_heartbeat.serial_chunks, [])
+        self.assertEqual(loopback_heartbeat.direct_chunks, [])
+
+        app_heartbeat = self.broker.handle_client_bytes("client-c", make_heartbeat_frame(2))
+        self.assertEqual(len(app_heartbeat.serial_chunks), 1)
 
     def test_non_owner_disconnect_does_not_terminate_host_session(self) -> None:
         self.broker.handle_client_bytes("client-a", make_want_config_frame())
