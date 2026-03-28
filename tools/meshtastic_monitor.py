@@ -39,6 +39,8 @@ except ModuleNotFoundError as exc:
     )
     raise SystemExit(1)
 PALETTE = Palette()
+ORANGE = "\033[38;5;208m" if PALETTE.reset else ""
+MESSAGE_TYPE_WIDTH = 18
 
 
 def utc_timestamp() -> str:
@@ -66,13 +68,31 @@ def packet_sender_label(packet: dict, iface=None) -> str:
     return "-"
 
 
+def display_topic_name(topic_name: str) -> str:
+    if topic_name.startswith("meshtastic."):
+        return topic_name[len("meshtastic.") :]
+    return topic_name
+
+
+def packet_sender_column(packet: dict, iface=None) -> str:
+    return packet_sender_label(packet, iface)[:5].ljust(5)
+
+
+def sender_column(topic_name: str, kwargs: dict) -> str:
+    if not topic_name.startswith("meshtastic.receive"):
+        return " " * 5
+    packet = kwargs.get("packet", {})
+    if not isinstance(packet, dict):
+        return " " * 5
+    return packet_sender_column(packet, kwargs.get("interface"))
+
+
 def packet_preview(packet: dict, iface=None) -> str:
     decoded = packet.get("decoded", {})
-    sender = packet_sender_label(packet, iface)
     for key in ("text", "position", "user", "telemetry", "routing", "neighborInfo"):
         if key in decoded:
             value = strip_raw(decoded[key])
-            return f"from={sender} {key}={json.dumps(value, sort_keys=True)}"
+            return f"{key}={json.dumps(value, sort_keys=True)}"
 
     if "portnum" in decoded:
         payload = decoded.get("payload")
@@ -80,10 +100,10 @@ def packet_preview(packet: dict, iface=None) -> str:
             payload_repr = f"<{len(payload)} bytes>"
         else:
             payload_repr = json.dumps(strip_raw(payload))
-        return f"from={sender} portnum={decoded['portnum']} payload={payload_repr}"
+        return f"portnum={decoded['portnum']} payload={payload_repr}"
 
     summary = {
-        "from": sender,
+        "from": packet_sender_label(packet, iface),
         "fromId": packet.get("fromId"),
         "toId": packet.get("toId"),
         "channel": packet.get("channel"),
@@ -267,9 +287,16 @@ class Monitor:
             self.write_log_line(line)
             return
 
-        line = f"{timestamp}  {topic_name}  {summary}"
-        topic_text = style(PALETTE, topic_color(topic_name) + PALETTE.bold, topic_name)
-        print(f"{style(PALETTE, PALETTE.dim, timestamp)}  {topic_text}  {summary}", flush=True)
+        topic_label = display_topic_name(topic_name)
+        topic_cell = f"{topic_label:<{MESSAGE_TYPE_WIDTH}}"
+        sender = sender_column(topic_name, kwargs)
+        line = f"{timestamp}  {topic_cell}  {sender}  {summary}"
+        topic_text = style(PALETTE, topic_color(topic_name) + PALETTE.bold, topic_cell)
+        sender_text = style(PALETTE, ORANGE + PALETTE.bold, sender)
+        print(
+            f"{style(PALETTE, PALETTE.dim, timestamp)}  {topic_text}  {sender_text}  {summary}",
+            flush=True,
+        )
         self.write_log_line(line)
 
     def on_event(self, topic=pub.AUTO_TOPIC, **kwargs) -> None:
