@@ -260,6 +260,7 @@ class Monitor:
         self.exclude_filters = parse_filters(args.exclude)
         self.log_handle = None
         self.node_update_fingerprints: dict[str, str] = {}
+        self.connection_established = False
 
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
@@ -275,6 +276,13 @@ class Monitor:
         if self.args.topic_prefix and not topic_name.startswith(self.args.topic_prefix):
             return False
         if topic_name == "meshtastic.log.line" and not self.args.include_log_lines:
+            return False
+        if topic_name == "meshtastic.connection.established":
+            self.connection_established = True
+        if topic_name == "meshtastic.connection.lost":
+            self.connection_established = False
+        if topic_name == "meshtastic.node.updated" and not self.connection_established:
+            self.is_duplicate_node_update(kwargs)
             return False
         if topic_name == "meshtastic.node.updated" and self.is_duplicate_node_update(kwargs):
             return False
