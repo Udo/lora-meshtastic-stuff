@@ -337,7 +337,7 @@ def _resolve_meshtastic_target_with_details(
     status_file = status_file or PROXY_STATUS_FILE
     serial_port = port or env_serial_port()
     resolved_tcp_port = tcp_port if tcp_port is not None else env_tcp_port()
-    explicit_host = normalize_tcp_client_host(host or env_host_override())
+    explicit_host = (host or env_host_override()).strip()
     details: dict[str, object] = {
         "requested": {
             "port": port,
@@ -359,7 +359,7 @@ def _resolve_meshtastic_target_with_details(
         target = MeshtasticTarget(
             mode="tcp",
             source="explicit-host" if host else "env-host",
-            host=explicit_host,
+            host=normalize_tcp_client_host(explicit_host),
             tcp_port=resolved_tcp_port,
         )
         details["checks"].append(

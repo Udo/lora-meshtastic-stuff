@@ -1311,20 +1311,21 @@ proxy_print_json() {
   pid="$(proxy_pid || true)"
   manager="$(proxy_manager_label)"
 
-  run_system_python - "${health}" "${PROXY_STATUS_FILE}" "${PROXY_CONNECT_HOST}" "${TCP_PORT}" "${PORT}" "${PROXY_LOG_FILE}" "${pid}" "${manager}" "${PROXY_SYSTEMD_UNIT}" <<'PY'
+  run_system_python - "${health}" "${PROXY_STATUS_FILE}" "${RUNTIME_MANAGER_STATUS_FILE}" "${PROXY_CONNECT_HOST}" "${TCP_PORT}" "${PORT}" "${PROXY_LOG_FILE}" "${pid}" "${manager}" "${PROXY_SYSTEMD_UNIT}" <<'PY'
 import json
 import pathlib
 import sys
 
 health = sys.argv[1]
 status_path = pathlib.Path(sys.argv[2])
-tcp_host = sys.argv[3]
-tcp_port = int(sys.argv[4])
-serial_port = sys.argv[5]
-log_file = sys.argv[6]
-pid = sys.argv[7] or None
-manager = sys.argv[8]
-journal_unit = sys.argv[9]
+manager_status_path = pathlib.Path(sys.argv[3])
+tcp_host = sys.argv[4]
+tcp_port = int(sys.argv[5])
+serial_port = sys.argv[6]
+log_file = sys.argv[7]
+pid = sys.argv[8] or None
+manager = sys.argv[9]
+journal_unit = sys.argv[10]
 
 payload = {}
 if status_path.exists():
@@ -1332,6 +1333,13 @@ if status_path.exists():
     payload = json.loads(status_path.read_text(encoding="utf-8"))
   except json.JSONDecodeError:
     payload = {}
+
+manager_snapshot = {}
+if manager_status_path.exists():
+  try:
+    manager_snapshot = json.loads(manager_status_path.read_text(encoding="utf-8"))
+  except json.JSONDecodeError:
+    manager_snapshot = {}
 
 payload.update(
   {
@@ -1344,6 +1352,7 @@ payload.update(
     "log_file": log_file,
     "pid": pid or (payload.get("pid") if health in {"healthy", "unhealthy"} else None),
     "manager": manager,
+    "manager_snapshot": manager_snapshot,
     "journal_unit": journal_unit if manager == "systemd-user" else None,
   }
 )
