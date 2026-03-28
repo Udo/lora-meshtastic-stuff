@@ -9,6 +9,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from meshtastic_messages import lookup_identity
+
 from _meshtastic_common import (
     DEFAULT_SERIAL_PORT,
     DEFAULT_TCP_PORT,
@@ -53,12 +55,24 @@ def strip_raw(obj):
     return obj
 
 
-def packet_preview(packet: dict) -> str:
+def packet_sender_label(packet: dict, iface=None) -> str:
+    from_id = str(packet.get("fromId") or "")
+    if iface is not None:
+        identity = lookup_identity(iface, node_num=packet.get("from"), node_id=from_id)
+        if identity.short_name:
+            return identity.short_name
+    if from_id:
+        return from_id
+    return "-"
+
+
+def packet_preview(packet: dict, iface=None) -> str:
     decoded = packet.get("decoded", {})
+    sender = packet_sender_label(packet, iface)
     for key in ("text", "position", "user", "telemetry", "routing", "neighborInfo"):
         if key in decoded:
             value = strip_raw(decoded[key])
-            return f"{key}={json.dumps(value, sort_keys=True)}"
+            return f"from={sender} {key}={json.dumps(value, sort_keys=True)}"
 
     if "portnum" in decoded:
         payload = decoded.get("payload")
@@ -66,9 +80,10 @@ def packet_preview(packet: dict) -> str:
             payload_repr = f"<{len(payload)} bytes>"
         else:
             payload_repr = json.dumps(strip_raw(payload))
-        return f"portnum={decoded['portnum']} payload={payload_repr}"
+        return f"from={sender} portnum={decoded['portnum']} payload={payload_repr}"
 
     summary = {
+        "from": sender,
         "fromId": packet.get("fromId"),
         "toId": packet.get("toId"),
         "channel": packet.get("channel"),
@@ -158,7 +173,7 @@ def event_summary(topic_name: str, kwargs: dict) -> str:
     if topic_name.startswith("meshtastic.receive"):
         packet = kwargs.get("packet", {})
         packet = strip_raw(packet)
-        return packet_preview(packet)
+        return packet_preview(packet, kwargs.get("interface"))
 
     cleaned = {key: strip_raw(value) for key, value in kwargs.items() if key != "interface"}
     return json.dumps(cleaned, sort_keys=True)
