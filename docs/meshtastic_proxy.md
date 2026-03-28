@@ -28,7 +28,7 @@
 - Hot-reloads changed handler files without restarting the proxy.
 - Calls optional plugin entry points `handle_packet(event, api)`, `handle_client_call(event, api)`, and `tick(event, api)`.
 - Exposes a host-extension API so plugins can inspect mesh packets, persist state, and emit reply packets through the attached node without replacing firmware behavior.
-- When started through the wrapper, it auto-starts the `meshtastic_protocol.py` sidecar so a historical archive is collected automatically.
+- When started through the wrapper, the `meshtastic_protocol.py` sidecar stays off by default and must be enabled explicitly if you want a second TCP client attached automatically.
 - Writes a status snapshot JSON file used by wrappers and direct tools for auto-detection, health checks, and debugging.
 - Exports broker lease state including whether the current control owner has a confirmed admin session and how long that lease has left.
 - On Linux, can be installed as a systemd user service for automatic startup with logs sent to journald or syslog-compatible collectors.

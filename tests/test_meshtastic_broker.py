@@ -1266,6 +1266,55 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["clean request:clean"])
 
+    def test_bbs_mode_sends_banner_for_first_contact_and_persists_user_record(self) -> None:
+        pathlib.Path(self.config_file).write_text("dm_mode=BBS\n", encoding="utf-8")
+        source_dir = REPO_ROOT / "plugins" / "DM_BBS"
+        target_dir = self.plugins_dir / "DM_BBS"
+        shutil.copytree(source_dir, target_dir)
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("WO67", from_node=777))
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=42))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"checking in", from_node=42, to_node=777))
+
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+        reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[0])
+        text = reply.packet.decoded.payload.decode("utf-8")
+
+        self.assertEqual(int(reply.packet.to), 42)
+        self.assertEqual(int(reply.packet.decoded.portnum), int(portnums_pb2.TEXT_MESSAGE_APP))
+        self.assertIn("WO67 BBS", text)
+        self.assertIn("Status: online | users: 1", text)
+        self.assertIn("Caller: PEER", text)
+        self.assertIn("hello  show this page", text)
+
+        record_path = pathlib.Path(self.temp_dir.name) / "data" / "bbs" / "users" / "42.json"
+        wait_until(record_path.exists)
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["node_num"], 42)
+        self.assertEqual(record["sender_short_name"], "PEER")
+
+    def test_bbs_mode_hello_command_replays_banner_without_creating_duplicate_user(self) -> None:
+        pathlib.Path(self.config_file).write_text("dm_mode=BBS\n", encoding="utf-8")
+        source_dir = REPO_ROOT / "plugins" / "DM_BBS"
+        target_dir = self.plugins_dir / "DM_BBS"
+        shutil.copytree(source_dir, target_dir)
+
+        self.fake_serial.inject_read(make_fromradio_admin_owner_response_frame("WO67", from_node=777))
+        self.fake_serial.inject_read(make_fromradio_nodeinfo_frame("PEER", from_node=42))
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"first contact", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 1)
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello", from_node=42, to_node=777))
+        wait_until(lambda: len(non_probe_writes(self.fake_serial.writes)) >= 2)
+        reply = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[1])
+        text = reply.packet.decoded.payload.decode("utf-8")
+
+        self.assertIn("WO67 BBS", text)
+        self.assertIn("Status: online | users: 1", text)
+
+        users_dir = pathlib.Path(self.temp_dir.name) / "data" / "bbs" / "users"
+        self.assertEqual(sorted(path.name for path in users_dir.glob("*.json")), ["42.json"])
+
     def test_direct_message_plugin_hot_reloads_under_dm_directory(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-reload.txt"
         dm_dir = self.plugins_dir / "DM"

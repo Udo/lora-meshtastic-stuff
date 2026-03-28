@@ -417,7 +417,12 @@ def packet_scope(packet: dict[str, object]) -> str | None:
 
     portnum = decoded.get("portnum")
     if portnum in ("TEXT_MESSAGE_APP", portnums_pb2.PortNum.TEXT_MESSAGE_APP):
-        return "public"
+        packet_to = packet.get("to")
+        try:
+            packet_to_num = int(packet_to)
+        except (TypeError, ValueError):
+            packet_to_num = 0
+        return "private" if packet_to_num not in (0, 0xFFFFFFFF) else "public"
     if portnum in ("PRIVATE_APP", portnums_pb2.PortNum.PRIVATE_APP):
         return "private"
     return None
@@ -650,7 +655,7 @@ def send_private_message(args: argparse.Namespace) -> int:
             wantAck=not args.no_wait_for_ack,
             channelIndex=args.channel_index,
             onResponse=None if args.no_wait_for_ack else on_response,
-            portNum=portnums_pb2.PortNum.PRIVATE_APP,
+            portNum=portnums_pb2.PortNum.TEXT_MESSAGE_APP,
         )
 
         status = "queued"

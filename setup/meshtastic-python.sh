@@ -43,7 +43,7 @@ PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
 PROTOCOL_LOG_NAME="${MESHTASTIC_PROTOCOL_LOG_NAME:-protocol}"
-PROTOCOL_SIDECAR_MODE="${MESHTASTIC_PROTOCOL_SIDECAR_MODE:-auto}"
+PROTOCOL_SIDECAR_MODE="${MESHTASTIC_PROTOCOL_SIDECAR_MODE:-off}"
 PROXY_PID_FILE="${RUNTIME_DIR}/proxy.pid"
 PROXY_LOG_FILE="${RUNTIME_DIR}/proxy.log"
 PROXY_STATUS_FILE="${RUNTIME_DIR}/proxy-status.json"
@@ -134,7 +134,7 @@ Environment:
   MESHTASTIC_PROXY_BIND_HOST Override the local proxy bind host (default: 127.0.0.1)
   MESHTASTIC_PROXY_HOST Override the host wrappers should use when the local proxy is running (default: 127.0.0.1)
   MESHTASTIC_PROTOCOL_LOG_NAME Override the protocol sidecar log basename (default: protocol)
-  MESHTASTIC_PROTOCOL_SIDECAR_MODE Control runtime-manager protocol sidecar startup: auto, on, or off (default: auto)
+  MESHTASTIC_PROTOCOL_SIDECAR_MODE Control runtime-manager protocol sidecar startup: auto, on, or off (default: off)
   MESHTASTIC_BAUD Override the UART baud rate for rawlog (default: 115200)
   MESHTASTIC_LOG_SECONDS Override rawlog capture duration in seconds (default: 20)
   MESHTASTIC_REGION Override the region used by provision (default: EU_868)
@@ -707,15 +707,113 @@ proxy_system_service_pid() {
 }
 
 proxy_manual_pid() {
-  if [[ -f "${PROXY_PID_FILE}" ]]; then
-    cat "${PROXY_PID_FILE}"
+  local pid
+
+  pid="$(proxy_manual_runtime_manager_pid || true)"
+  if [[ -n "${pid}" ]]; then
+    printf '%s\n' "${pid}"
+    return 0
   fi
+
+  pid="$(proxy_manual_child_pid || true)"
+  if [[ -n "${pid}" ]]; then
+    printf '%s\n' "${pid}"
+    return 0
+  fi
+
+  if [[ -f "${PROXY_PID_FILE}" ]]; then
+    pid="$(cat "${PROXY_PID_FILE}")"
+    if [[ -n "${pid}" ]]; then
+      printf '%s\n' "${pid}"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 protocol_manual_pid() {
   if [[ -f "${PROTOCOL_PID_FILE}" ]]; then
     cat "${PROTOCOL_PID_FILE}"
   fi
+}
+
+read_runtime_manager_status_field() {
+  local field_path="${1}"
+
+  if [[ ! -f "${RUNTIME_MANAGER_STATUS_FILE}" ]]; then
+    return 1
+  fi
+
+  run_system_python - "${RUNTIME_MANAGER_STATUS_FILE}" "${field_path}" <<'PY'
+import json
+import sys
+
+status_path = sys.argv[1]
+field_path = sys.argv[2].split('.')
+
+try:
+  with open(status_path, encoding='utf-8') as handle:
+    value = json.load(handle)
+except OSError:
+  raise SystemExit(1)
+except json.JSONDecodeError:
+  raise SystemExit(1)
+
+for part in field_path:
+  if not isinstance(value, dict):
+    raise SystemExit(1)
+  value = value.get(part)
+  if value is None:
+    raise SystemExit(1)
+
+if isinstance(value, bool):
+  print('true' if value else 'false')
+else:
+  print(value)
+PY
+}
+
+process_matches_command() {
+  local pid="${1}"
+  local expected="${2}"
+  local args=''
+
+  if [[ -z "${pid}" || -z "${expected}" ]]; then
+    return 1
+  fi
+
+  if ! kill -0 "${pid}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+  [[ -n "${args}" && "${args}" == *"${expected}"* ]]
+}
+
+proxy_manual_runtime_manager_pid() {
+  local pid
+  pid="$(read_runtime_manager_status_field manager_pid || true)"
+
+  if [[ -n "${pid}" ]] && process_matches_command "${pid}" "${RUNTIME_MANAGER_TOOL}"; then
+    printf '%s\n' "${pid}"
+    return 0
+  fi
+
+  return 1
+}
+
+proxy_manual_child_pid() {
+  local pid running
+  running="$(read_runtime_manager_status_field proxy.running || true)"
+  pid="$(read_runtime_manager_status_field proxy.pid || true)"
+
+  if [[ "${running}" == "true" && -n "${pid}" ]] && process_matches_command "${pid}" "${PROXY_TOOL}"; then
+    printf '%s\n' "${pid}"
+    return 0
+  fi
+
+  return 1
 }
 
 proxy_pid() {
@@ -738,13 +836,26 @@ proxy_pid() {
 
 proxy_manual_is_running() {
   local pid
+
+  pid="$(proxy_manual_runtime_manager_pid || true)"
+  if [[ -n "${pid}" ]]; then
+    printf '%s\n' "${pid}" > "${PROXY_PID_FILE}"
+    return 0
+  fi
+
+  pid="$(proxy_manual_child_pid || true)"
+  if [[ -n "${pid}" ]]; then
+    return 0
+  fi
+
   pid="$(proxy_manual_pid || true)"
 
   if [[ -z "${pid}" ]]; then
+    rm -f "${PROXY_PID_FILE}"
     return 1
   fi
 
-  if kill -0 "${pid}" >/dev/null 2>&1; then
+  if process_matches_command "${pid}" "${RUNTIME_MANAGER_TOOL}"; then
     return 0
   fi
 

@@ -19,9 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROXY_TOOL = REPO_ROOT / "tools" / "meshtastic_proxy.py"
 DEFAULT_PROTOCOL_TOOL = REPO_ROOT / "tools" / "meshtastic_protocol.py"
 DEFAULT_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "runtime-manager-status.json"
-LOOPBACK_BIND_HOSTS = {"127.0.0.1", "::1", "localhost"}
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Meshtastic runtime manager")
     parser.add_argument("--serial-port", default=DEFAULT_SERIAL_PORT, help="Serial port owned by the proxy")
@@ -37,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--protocol-sidecar-mode",
         choices=("auto", "on", "off"),
         default="auto",
-        help="When to attach the protocol logger as a second TCP client: auto starts it only for loopback-bound proxies",
+        help="When to attach the protocol logger as a second TCP client: auto currently stays off unless explicitly enabled",
     )
     parser.add_argument("--protocol-connect-wait-seconds", type=float, default=20.0, help="Seconds the protocol logger waits for TCP readiness")
     parser.add_argument("--proxy-tool", default=str(DEFAULT_PROXY_TOOL), help=argparse.SUPPRESS)
@@ -90,12 +87,7 @@ class RuntimeManager:
 
     def should_start_protocol_sidecar(self) -> bool:
         mode = self.args.protocol_sidecar_mode
-        if mode == "on":
-            return True
-        if mode == "off":
-            return False
-        listen_host = self.args.listen_host.strip().strip("[]").lower()
-        return listen_host in LOOPBACK_BIND_HOSTS
+        return mode == "on"
 
     def _spawn(self, name: str, command: list[str]) -> subprocess.Popen[str]:
         LOGGER.info("starting %s: %s", name, " ".join(command))

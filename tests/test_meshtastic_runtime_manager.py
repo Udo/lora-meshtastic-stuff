@@ -12,7 +12,7 @@ import meshtastic_runtime_manager as runtime_manager
 
 
 class RuntimeManagerTests(unittest.TestCase):
-    def test_auto_sidecar_enabled_for_loopback_bind(self) -> None:
+    def test_auto_sidecar_disabled_for_loopback_bind(self) -> None:
         args = runtime_manager.build_parser().parse_args([
             "--listen-host",
             "127.0.0.1",
@@ -20,7 +20,7 @@ class RuntimeManagerTests(unittest.TestCase):
 
         manager = runtime_manager.RuntimeManager(args)
 
-        self.assertTrue(manager.should_start_protocol_sidecar())
+        self.assertFalse(manager.should_start_protocol_sidecar())
 
     def test_auto_sidecar_disabled_for_wildcard_bind(self) -> None:
         args = runtime_manager.build_parser().parse_args([

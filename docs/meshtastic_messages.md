@@ -20,7 +20,7 @@
 - Sends private text messages to a known peer by node ID, short name, long name, or unique prefix.
 - Resolves transport the same way as the other repo tools: explicit `--host`, then `MESHTASTIC_HOST`, then a healthy local proxy or broker, then serial fallback.
 - Appends grep-friendly single-line transcripts to `~/.local/log/meshtastic/<logname>.log`.
-- Records live public `TEXT_MESSAGE_APP` traffic and private `PRIVATE_APP` traffic while `sync` is running.
+- Records live public broadcasts plus direct-message traffic while `sync` is running.
 - Provides `tail`, `grep`, `stats`, and `prune` subcommands for transcript inspection and cleanup without touching the radio.
 
 ## Log Format
@@ -50,7 +50,7 @@
 
 - Entry point: `tools/meshtastic_messages.py`.
 - Transport resolution: `tools/_meshtastic_common.py` via `resolve_meshtastic_target()`.
-- Send path: resolves the peer from the current NodeDB snapshot, sends with Meshtastic `PRIVATE_APP`, then appends the transmitted line to the chosen log.
+- Send path: resolves the peer from the current NodeDB snapshot, sends a direct `TEXT_MESSAGE_APP` packet to that node, then appends the transmitted line to the chosen log.
 - Sync path: subscribes to Meshtastic pubsub receive topics and writes only public text and private payload packets.
 - Transcript path selection: `--log-dir`, then `MESHTASTIC_LOG_DIR`, then `~/.local/log/meshtastic`.
 - Shared connection setup and transport-specific error messages come from `tools/_meshtastic_common.py`.

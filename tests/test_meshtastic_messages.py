@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -52,6 +53,26 @@ class FakeInterface:
         }
 
 
+class FakeSendInterface(FakeInterface):
+    def __init__(self) -> None:
+        super().__init__()
+        self.send_calls: list[dict[str, object]] = []
+        self.closed = False
+
+    def sendText(self, message, destinationId, **kwargs):
+        self.send_calls.append(
+            {
+                "message": message,
+                "destinationId": destinationId,
+                **kwargs,
+            }
+        )
+        return {"id": 12345}
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class MeshtasticMessagesTests(unittest.TestCase):
     def test_resolve_peer_matches_id_short_name_and_prefix(self) -> None:
         iface = FakeInterface()
@@ -64,7 +85,7 @@ class MeshtasticMessagesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "matches multiple nodes"):
             messages.resolve_peer(FakeInterface(), "worms")
 
-    def test_record_from_public_packet_uses_text_field(self) -> None:
+    def test_record_from_direct_text_packet_uses_private_scope(self) -> None:
         record = messages.record_from_packet(
             {
                 "id": 77,
@@ -82,9 +103,27 @@ class MeshtasticMessagesTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(record)
-        self.assertEqual(record["scope"], "public")
+        self.assertEqual(record["scope"], "private")
         self.assertEqual(record["text"], "hello public")
         self.assertEqual(record["from_short"], "WO67")
+
+    def test_record_from_broadcast_text_packet_uses_public_scope(self) -> None:
+        record = messages.record_from_packet(
+            {
+                "id": 78,
+                "from": 456,
+                "fromId": "!0439d098",
+                "to": 0xFFFFFFFF,
+                "toId": "^all",
+                "channel": 0,
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": "hello mesh"},
+            },
+            FakeInterface(),
+        )
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record["scope"], "public")
+        self.assertEqual(record["text"], "hello mesh")
 
     def test_record_from_private_packet_decodes_payload_bytes(self) -> None:
         record = messages.record_from_packet(
@@ -103,6 +142,34 @@ class MeshtasticMessagesTests(unittest.TestCase):
         self.assertIsNotNone(record)
         self.assertEqual(record["scope"], "private")
         self.assertEqual(record["text"], "secret hello")
+
+    def test_send_private_message_uses_direct_text_message_port(self) -> None:
+        iface = FakeSendInterface()
+        args = messages.build_parser().parse_args(
+            [
+                "--host",
+                "127.0.0.1",
+                "--tcp-port",
+                "4403",
+                "send",
+                "WO67",
+                "hello",
+                "--no-wait-for-ack",
+            ]
+        )
+
+        with mock.patch.object(messages, "connect_interface_for_target", return_value=iface):
+            result = messages.send_private_message(args)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(len(iface.send_calls), 1)
+        self.assertEqual(iface.send_calls[0]["message"], "hello")
+        self.assertEqual(iface.send_calls[0]["destinationId"], "!0439d098")
+        self.assertEqual(
+            iface.send_calls[0]["portNum"],
+            messages.portnums_pb2.PortNum.TEXT_MESSAGE_APP,
+        )
+        self.assertTrue(iface.closed)
 
     def test_lookup_identity_tolerates_missing_node_cache(self) -> None:
         iface = type("PartialInterface", (), {"nodes": None, "myInfo": None})()

@@ -178,6 +178,7 @@ order_file="$tmpdir/order.txt"
 print_banner() { :; }
 print_warn() { :; }
 preflight_guided_setup() { echo preflight >> "$order_file"; }
+guided_validate_selected_port() { :; }
 prompt_with_default() { echo "prompt:$1" >> "$order_file"; printf '%s\n' "$2"; }
 prompt_secret_optional() { echo secret >> "$order_file"; printf '\n'; }
 prompt_yes_no() { echo confirm >> "$order_file"; return 1; }
@@ -407,7 +408,85 @@ cat "$PROXY_LOG_FILE"
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn(f"nohup:{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_runtime_manager.py --serial-port", result.stdout)
-        self.assertIn("--protocol-sidecar-mode auto", result.stdout)
+        self.assertIn("--protocol-sidecar-mode off", result.stdout)
+
+    def test_proxy_manual_running_prefers_live_runtime_manager_status(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'kill "$manager_pid" >/dev/null 2>&1 || true; rm -rf "$tmpdir"' EXIT
+PROXY_PID_FILE="$tmpdir/proxy.pid"
+RUNTIME_MANAGER_STATUS_FILE="$tmpdir/runtime-manager-status.json"
+RUNTIME_MANAGER_TOOL="sleep"
+PROXY_TOOL="sleep"
+sleep 30 &
+manager_pid=$!
+printf '999999\n' > "$PROXY_PID_FILE"
+cat > "$RUNTIME_MANAGER_STATUS_FILE" <<EOF
+{"manager_pid": $manager_pid, "proxy": {"running": false, "pid": null}}
+EOF
+proxy_manual_is_running
+printf 'pid:%s\n' "$(proxy_pid)"
+printf 'file:%s\n' "$(cat "$PROXY_PID_FILE")"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0], f"pid:{lines[1].split(':', 1)[1]}")
+        self.assertRegex(lines[0], r"^pid:\d+$")
+
+    def test_proxy_manual_running_accepts_live_proxy_child_when_manager_is_gone(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'kill "$proxy_child_pid" >/dev/null 2>&1 || true; rm -rf "$tmpdir"' EXIT
+PROXY_PID_FILE="$tmpdir/proxy.pid"
+RUNTIME_MANAGER_STATUS_FILE="$tmpdir/runtime-manager-status.json"
+RUNTIME_MANAGER_TOOL="missing-runtime-manager"
+PROXY_TOOL="sleep"
+sleep 30 &
+proxy_child_pid=$!
+cat > "$RUNTIME_MANAGER_STATUS_FILE" <<EOF
+{"manager_pid": 999999, "proxy": {"running": true, "pid": $proxy_child_pid}}
+EOF
+proxy_manual_is_running
+printf 'pid:%s\n' "$(proxy_pid)"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertRegex(result.stdout.strip(), r"^pid:\d+$")
+
+    def test_proxy_manual_running_clears_stale_pid_file(self) -> None:
+        result = run_wrapper_snippet(
+            """
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+PROXY_PID_FILE="$tmpdir/proxy.pid"
+RUNTIME_MANAGER_STATUS_FILE="$tmpdir/runtime-manager-status.json"
+RUNTIME_MANAGER_TOOL="missing-runtime-manager"
+PROXY_TOOL="missing-proxy"
+printf '999999\n' > "$PROXY_PID_FILE"
+cat > "$RUNTIME_MANAGER_STATUS_FILE" <<EOF
+{"manager_pid": 999999, "proxy": {"running": true, "pid": 999998}}
+EOF
+if proxy_manual_is_running; then
+  printf 'running\n'
+else
+  printf 'stopped\n'
+fi
+if [[ -f "$PROXY_PID_FILE" ]]; then
+  printf 'pidfile:present\n'
+else
+  printf 'pidfile:missing\n'
+fi
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout, "stopped\npidfile:missing\n")
 
     def test_proxy_unit_uses_runtime_manager_without_protocol_unit_dependency(self) -> None:
         result = run_wrapper_snippet(
