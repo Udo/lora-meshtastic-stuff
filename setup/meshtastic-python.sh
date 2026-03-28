@@ -2164,7 +2164,7 @@ proxy_stop() {
 }
 
 proxy_status() {
-  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes ignored_serial_debug_bytes invalid_radio_frames runtime_manager_pid runtime_proxy_child runtime_protocol_child
+  local owner denied forwarded clients serial_connected json_output admin_responses admin_owner session_key session_confirmed session_expires_in manager dropped_radio_bytes ignored_serial_debug_bytes invalid_radio_frames runtime_manager_pid runtime_proxy_child runtime_protocol_child runtime_proxy_pid runtime_protocol_pid runtime_proxy_restarts runtime_protocol_restarts runtime_have_children
   json_output="${1:-}"
   manager="$(proxy_manager_label)"
 
@@ -2189,7 +2189,11 @@ proxy_status() {
     invalid_radio_frames="$(read_proxy_status_field invalid_radio_frames || true)"
     runtime_manager_pid="$(read_proxy_status_field manager_pid || true)"
     runtime_proxy_child="$(read_proxy_status_field proxy.running || true)"
+    runtime_proxy_pid="$(read_proxy_status_field proxy.pid || true)"
+    runtime_proxy_restarts="$(read_proxy_status_field proxy.restart_count || true)"
     runtime_protocol_child="$(read_proxy_status_field protocol.running || true)"
+    runtime_protocol_pid="$(read_proxy_status_field protocol.pid || true)"
+    runtime_protocol_restarts="$(read_proxy_status_field protocol.restart_count || true)"
     if [[ -n "${clients}" ]]; then
       printf '  Clients: %s\n' "${clients}"
     fi
@@ -2229,11 +2233,14 @@ proxy_status() {
     if [[ -n "${runtime_manager_pid}" ]]; then
       printf '  Runtime manager pid: %s\n' "${runtime_manager_pid}"
     fi
-    if [[ -n "${runtime_proxy_child}" ]]; then
-      printf '  Runtime proxy child: %s\n' "${runtime_proxy_child}"
+    runtime_have_children=''
+    if [[ -n "${runtime_proxy_child}${runtime_proxy_pid}${runtime_proxy_restarts}${runtime_protocol_child}${runtime_protocol_pid}${runtime_protocol_restarts}" ]]; then
+      runtime_have_children=1
+      printf '  Runtime children:\n'
     fi
-    if [[ -n "${runtime_protocol_child}" ]]; then
-      printf '  Runtime protocol child: %s\n' "${runtime_protocol_child}"
+    if [[ -n "${runtime_have_children}" ]]; then
+      printf '    proxy: status=%s pid=%s restarts=%s\n' "${runtime_proxy_child:-unknown}" "${runtime_proxy_pid:-n/a}" "${runtime_proxy_restarts:-0}"
+      printf '    protocol: status=%s pid=%s restarts=%s\n' "${runtime_protocol_child:-unknown}" "${runtime_protocol_pid:-n/a}" "${runtime_protocol_restarts:-0}"
     fi
     if [[ -n "${admin_owner}" ]]; then
       printf '  Last admin owner: %s\n' "${admin_owner}"

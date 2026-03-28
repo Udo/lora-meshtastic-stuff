@@ -705,9 +705,9 @@ proxy_status
         self.assertIn("Proxy:   stopped\n", result.stdout)
         self.assertIn("  Manager: systemd-user\n", result.stdout)
 
-        def test_proxy_status_reports_radio_fault_counters(self) -> None:
-                result = run_wrapper_snippet(
-                        """
+    def test_proxy_status_reports_radio_fault_counters(self) -> None:
+        result = run_wrapper_snippet(
+            """
 proxy_is_ready() { return 0; }
 proxy_manager_label() { printf 'systemd-system\n'; }
 proxy_pid() { printf '123\n'; }
@@ -725,21 +725,26 @@ read_proxy_status_field() {
         invalid_radio_frames) printf '3\n' ;;
         manager_pid) printf '444\n' ;;
         proxy.running) printf 'true\n' ;;
+        proxy.pid) printf '555\n' ;;
+        proxy.restart_count) printf '1\n' ;;
         protocol.running) printf 'true\n' ;;
+        protocol.pid) printf '666\n' ;;
+        protocol.restart_count) printf '4\n' ;;
         *) return 1 ;;
     esac
 }
 proxy_status
 """
-                )
+        )
 
-                self.assertEqual(result.returncode, 0, msg=result.stderr)
-                self.assertIn("  Dropped radio bytes: 17\n", result.stdout)
-                self.assertIn("  Ignored serial debug bytes: 64\n", result.stdout)
-                self.assertIn("  Invalid radio frames: 3\n", result.stdout)
-                self.assertIn("  Runtime manager pid: 444\n", result.stdout)
-                self.assertIn("  Runtime proxy child: true\n", result.stdout)
-                self.assertIn("  Runtime protocol child: true\n", result.stdout)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("  Dropped radio bytes: 17\n", result.stdout)
+        self.assertIn("  Ignored serial debug bytes: 64\n", result.stdout)
+        self.assertIn("  Invalid radio frames: 3\n", result.stdout)
+        self.assertIn("  Runtime manager pid: 444\n", result.stdout)
+        self.assertIn("  Runtime children:\n", result.stdout)
+        self.assertIn("    proxy: status=true pid=555 restarts=1\n", result.stdout)
+        self.assertIn("    protocol: status=true pid=666 restarts=4\n", result.stdout)
 
     def test_have_systemctl_user_requires_user_bus_environment(self) -> None:
         result = run_wrapper_snippet(

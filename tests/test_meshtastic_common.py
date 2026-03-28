@@ -105,7 +105,10 @@ class ResolveMeshtasticTargetTests(unittest.TestCase):
                 '{"listen_host": "127.0.0.1", "listen_port": 4403, "pid": ' + str(os.getpid()) + ', "serial_connected": true, "config_file": ' + json.dumps(str(service_config_path)) + '}\n',
                 encoding="utf-8",
             )
-            manager_status_path.write_text('{"manager_pid": 999, "proxy": {"running": true}, "protocol": {"running": true}}\n', encoding="utf-8")
+            manager_status_path.write_text(
+                '{"manager_pid": 999, "proxy": {"running": true, "pid": 111, "restart_count": 0}, "protocol": {"running": true, "pid": 222, "restart_count": 3}}\n',
+                encoding="utf-8",
+            )
 
             with mock.patch.object(common, "tcp_endpoint_ready", return_value=True):
                 summary = common.summarize_proxy_runtime(status_path, service_config_path, manager_status_path)
@@ -116,6 +119,7 @@ class ResolveMeshtasticTargetTests(unittest.TestCase):
         self.assertEqual(summary["config_file"], str(service_config_path))
         self.assertEqual(summary["config_file_loaded"], True)
         self.assertEqual(summary["manager_snapshot"]["manager_pid"], 999)
+        self.assertEqual(summary["manager_snapshot"]["protocol"]["restart_count"], 3)
 
     def test_summarize_proxy_runtime_reports_stopped_without_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

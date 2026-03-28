@@ -594,6 +594,28 @@ class MeshtasticBrokerTests(unittest.TestCase):
 
         self.assertIn("suppressed 1 similar chunk(s)", "\n".join(later_logs.output))
 
+    def test_uart_debug_throttling_is_scoped_per_subsystem(self) -> None:
+        radio_noise = b"DEBUG | [RadioIf] rx window open\n"
+        mesh_noise = b"DEBUG | [MeshService] packet queued\n"
+
+        with self.assertLogs("meshtastic_broker", level="INFO") as logs:
+            self.broker.observe_radio_bytes(radio_noise)
+            self.clock.advance(1.0)
+            self.broker.observe_radio_bytes(radio_noise)
+            self.clock.advance(1.0)
+            self.broker.observe_radio_bytes(mesh_noise)
+
+        combined = "\n".join(logs.output)
+        self.assertEqual(combined.count("uart debug[RadioIf]"), 1)
+        self.assertIn("uart debug[MeshService]", combined)
+
+        self.clock.advance(5.0)
+        with self.assertLogs("meshtastic_broker", level="INFO") as later_logs:
+            self.broker.observe_radio_bytes(radio_noise)
+
+        self.assertIn("uart debug[RadioIf]", "\n".join(later_logs.output))
+        self.assertIn("suppressed 1 line(s) totaling", "\n".join(later_logs.output))
+
     def test_undecodable_radio_frame_is_counted_and_dropped(self) -> None:
         bad_frame = bytes([0x94, 0xC3, 0x00, 0x03]) + b"\xff\xfe\xfd"
 

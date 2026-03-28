@@ -231,8 +231,8 @@ class MeshtasticStatusSummaryTests(unittest.TestCase):
                     },
                     "manager_snapshot": {
                         "manager_pid": 444,
-                        "proxy": {"running": True},
-                        "protocol": {"running": True},
+                        "proxy": {"running": True, "pid": 111, "restart_count": 0},
+                        "protocol": {"running": True, "pid": 222, "restart_count": 2},
                     },
                     "config_file_loaded": True,
                     "config_file": "/tmp/meshtastic/service.env",

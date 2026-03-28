@@ -11,8 +11,11 @@ LOGGER = logging.getLogger("meshtastic_broker")
 PROVISIONAL_CONTROL_LEASE_SECONDS = 10.0
 ADMIN_SESSION_LEASE_SECONDS = 300.0
 MALFORMED_RADIO_LOG_INTERVAL_SECONDS = 5.0
+UART_DEBUG_LOG_INTERVAL_SECONDS = 5.0
 ANSI_ESCAPE_RE = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 ANSI_CONTROL_FRAGMENT_RE = re.compile(rb"^(?:\x1b(?:\[[0-9;?]*[ -/]*[@-~]?)?)+$")
+UART_DEBUG_BRACKETED_SUBSYSTEM_RE = re.compile(r"\[([^\]\s]+)\]")
+UART_DEBUG_PIPE_SUBSYSTEM_RE = re.compile(r"^\S+\s+\|\s+([A-Za-z][\w.-]*)\b")
 
 
 def strip_ansi_escape_sequences(data: bytes) -> bytes:
@@ -51,6 +54,16 @@ def is_ansi_control_fragment(data: bytes) -> bool:
     if not strip_ansi_escape_sequences(data):
         return True
     return bool(ANSI_CONTROL_FRAGMENT_RE.fullmatch(data))
+
+
+def uart_debug_subsystem(sample_text: str) -> str:
+    match = UART_DEBUG_BRACKETED_SUBSYSTEM_RE.search(sample_text)
+    if match:
+        return match.group(1)
+    match = UART_DEBUG_PIPE_SUBSYSTEM_RE.search(sample_text)
+    if match:
+        return match.group(1)
+    return "general"
 
 
 @dataclass
@@ -216,6 +229,14 @@ class ObservedRadioFrame:
     message: mesh_pb2.FromRadio
 
 
+@dataclass
+class SerialDebugThrottleState:
+    last_log_at: float = float("-inf")
+    suppressed_chunks: int = 0
+    suppressed_bytes: int = 0
+    latest_sample: str = ""
+
+
 class MeshtasticBroker:
     def __init__(
         self,
@@ -248,18 +269,42 @@ class MeshtasticBroker:
         self._last_serial_debug_log_at = float("-inf")
         self._suppressed_serial_debug_chunks = 0
         self._suppressed_serial_debug_bytes = 0
+        self._serial_debug_throttle: dict[str, SerialDebugThrottleState] = {}
+
+    def _log_uart_debug_chunk(self, chunk: bytes, now: float) -> None:
+        sample_text = raw_chunk_sample_text(chunk)
+        if not sample_text:
+            return
+
+        subsystem = uart_debug_subsystem(sample_text)
+        state = self._serial_debug_throttle.setdefault(subsystem, SerialDebugThrottleState())
+        chunk_len = len(chunk)
+        if now - state.last_log_at < UART_DEBUG_LOG_INTERVAL_SECONDS:
+            state.suppressed_chunks += 1
+            state.suppressed_bytes += chunk_len
+            state.latest_sample = sample_text
+            return
+
+        message = "uart debug[%s]: %s"
+        args: tuple[object, ...] = (subsystem, sample_text)
+        if state.suppressed_chunks:
+            message += "; suppressed %s line(s) totaling %s byte(s); latest=%r"
+            args += (state.suppressed_chunks, state.suppressed_bytes, state.latest_sample)
+            state.suppressed_chunks = 0
+            state.suppressed_bytes = 0
+            state.latest_sample = ""
+        self.logger.info(message, *args)
+        state.last_log_at = now
 
     def _log_serial_debug_chunks(self, raw_chunks: list[bytes]) -> None:
         ignored_len = sum(len(chunk) for chunk in raw_chunks)
         if ignored_len <= 0:
             return
 
-        for chunk in raw_chunks:
-            sample_text = raw_chunk_sample_text(chunk)
-            if sample_text:
-                self.logger.info("uart debug: %s", sample_text)
-
         now = self.clock()
+        for chunk in raw_chunks:
+            self._log_uart_debug_chunk(chunk, now)
+
         if now - self._last_serial_debug_log_at < MALFORMED_RADIO_LOG_INTERVAL_SECONDS:
             self._suppressed_serial_debug_chunks += len(raw_chunks)
             self._suppressed_serial_debug_bytes += ignored_len

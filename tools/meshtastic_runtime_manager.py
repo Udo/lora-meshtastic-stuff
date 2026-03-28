@@ -45,19 +45,22 @@ class RuntimeManager:
         self.stop_requested = False
         self.proxy_process: subprocess.Popen[str] | None = None
         self.protocol_process: subprocess.Popen[str] | None = None
+        self.proxy_restart_count = 0
+        self.protocol_restart_count = 0
 
     def write_status(self) -> None:
         status_path = Path(self.args.manager_status_file)
         status_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def process_state(process: subprocess.Popen[str] | None) -> dict[str, object]:
+        def process_state(process: subprocess.Popen[str] | None, restart_count: int) -> dict[str, object]:
             if process is None:
-                return {"running": False, "pid": None, "returncode": None}
+                return {"running": False, "pid": None, "returncode": None, "restart_count": restart_count}
             returncode = process.poll()
             return {
                 "running": returncode is None,
                 "pid": process.pid,
                 "returncode": returncode,
+                "restart_count": restart_count,
             }
 
         payload = {
@@ -65,8 +68,8 @@ class RuntimeManager:
             "listen_host": self.args.listen_host,
             "connect_host": normalize_tcp_client_host(self.args.connect_host),
             "listen_port": self.args.listen_port,
-            "proxy": process_state(self.proxy_process),
-            "protocol": process_state(self.protocol_process),
+            "proxy": process_state(self.proxy_process, self.proxy_restart_count),
+            "protocol": process_state(self.protocol_process, self.protocol_restart_count),
         }
         temp_path = status_path.with_suffix(status_path.suffix + ".tmp")
         temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -166,6 +169,7 @@ class RuntimeManager:
                         if self.stop_requested:
                             break
                         time.sleep(1.0)
+                        self.protocol_restart_count += 1
                         self.start_protocol()
                 time.sleep(0.25)
         finally:
