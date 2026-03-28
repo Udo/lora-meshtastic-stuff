@@ -61,6 +61,7 @@ class ClientConnection:
     client_id: str
     sock: socket.socket
     address: tuple[str, int]
+    protocol_started: bool = False
     send_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def send(self, data: bytes) -> None:
@@ -259,6 +260,15 @@ class MeshtasticProxy:
     def broadcast(self, data: bytes) -> None:
         with self.clients_lock:
             clients = list(self.clients)
+        for client in clients:
+            try:
+                client.send(data)
+            except OSError:
+                self.drop_client(client)
+
+    def broadcast_pre_protocol_text(self, data: bytes) -> None:
+        with self.clients_lock:
+            clients = [client for client in self.clients if not client.protocol_started]
         for client in clients:
             try:
                 client.send(data)
@@ -966,11 +976,19 @@ class MeshtasticProxy:
                     chunk = handle.read(512)
                     if chunk:
                         try:
-                            observed_frames = self.broker.observe_radio_bytes(chunk)
+                            observation = self.broker.observe_radio_bytes(chunk)
                         except Exception:
                             LOGGER.exception("unexpected radio parse failure; dropping serial chunk")
+                            observation = None
+                        if observation is None:
                             observed_frames = []
+                            text_chunks = []
+                        else:
+                            observed_frames = observation.frames
+                            text_chunks = observation.text_chunks
                         self.write_status(force=True)
+                        for text_chunk in text_chunks:
+                            self.broadcast_pre_protocol_text(text_chunk)
                         self._handle_radio_plugins(observed_frames)
                         self._broadcast_observed_frames(observed_frames)
             except (SerialException, OSError) as exc:
@@ -993,6 +1011,7 @@ class MeshtasticProxy:
                     continue
                 if not data:
                     break
+                client.protocol_started = True
                 decision = self.broker.handle_client_bytes(client.client_id, data)
                 self.write_status(force=True)
                 for direct_chunk in decision.direct_chunks:

@@ -626,7 +626,7 @@ class MeshtasticBrokerTests(unittest.TestCase):
         observed = self.broker.observe_radio_bytes(make_fromradio_invalid_admin_frame())
         snapshot = self.broker.snapshot()
 
-        self.assertEqual(len(observed), 1)
+        self.assertEqual(len(observed.frames), 1)
         self.assertEqual(snapshot["observed_admin_responses"], 0)
         self.assertEqual(snapshot["control_owner"], "127.0.0.1:5001")
 
@@ -634,7 +634,7 @@ class MeshtasticBrokerTests(unittest.TestCase):
         observed = self.broker.observe_radio_bytes(b"garbage" + make_fromradio_text_frame(b"ok"))
         snapshot = self.broker.snapshot()
 
-        self.assertEqual(len(observed), 1)
+        self.assertEqual(len(observed.frames), 1)
         self.assertEqual(snapshot["dropped_radio_bytes"], len(b"garbage"))
         self.assertEqual(snapshot["invalid_radio_frames"], 0)
 
@@ -688,7 +688,7 @@ class MeshtasticBrokerTests(unittest.TestCase):
         observed = self.broker.observe_radio_bytes(bad_frame)
         snapshot = self.broker.snapshot()
 
-        self.assertEqual(observed, [])
+        self.assertEqual(observed.frames, [])
         self.assertEqual(snapshot["invalid_radio_frames"], 1)
 
     def test_unconfirmed_control_owner_expires_and_next_writer_can_claim(self) -> None:
@@ -765,6 +765,30 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         self.assertNotIn(client, self.proxy.clients)
         self.assertEqual(stalled_socket.shutdown_calls, 1)
         self.assertEqual(stalled_socket.close_calls, 1)
+
+    def test_proxy_mirrors_serial_debug_text_to_pre_protocol_clients(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(1.0)
+
+            wait_until(lambda: self.read_status().get("client_count") == 1)
+            self.fake_serial.inject_read(b"DEBUG | waiting for client protobuf\n")
+
+            received = client.recv(1024)
+
+            self.assertEqual(received, b"DEBUG | waiting for client protobuf\n")
+
+    def test_proxy_stops_mirroring_serial_debug_text_after_client_protocol_starts(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as client:
+            client.settimeout(0.5)
+
+            wait_until(lambda: self.read_status().get("client_count") == 1)
+            client.sendall(make_want_config_frame())
+            wait_until(lambda: make_want_config_frame() in non_probe_writes(self.fake_serial.writes))
+
+            self.fake_serial.inject_read(b"DEBUG | hidden after protobuf start\n")
+
+            with self.assertRaises(socket.timeout):
+                client.recv(1024)
 
     def test_proxy_queries_owner_and_channels_on_startup(self) -> None:
         probe_frames = [frame for frame in self.fake_serial.writes if is_proxy_admin_probe(frame)]

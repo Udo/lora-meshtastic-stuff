@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROXY_TOOL = REPO_ROOT / "tools" / "meshtastic_proxy.py"
 DEFAULT_PROTOCOL_TOOL = REPO_ROOT / "tools" / "meshtastic_protocol.py"
 DEFAULT_STATUS_FILE = REPO_ROOT / ".runtime" / "meshtastic" / "runtime-manager-status.json"
+LOOPBACK_BIND_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manager-status-file", default=str(DEFAULT_STATUS_FILE), help="Runtime manager status JSON path")
     parser.add_argument("--config-file", help="Config file path loaded by the caller")
     parser.add_argument("--protocol-log-name", default="protocol", help="Protocol log name")
+    parser.add_argument(
+        "--protocol-sidecar-mode",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="When to attach the protocol logger as a second TCP client: auto starts it only for loopback-bound proxies",
+    )
     parser.add_argument("--protocol-connect-wait-seconds", type=float, default=20.0, help="Seconds the protocol logger waits for TCP readiness")
     parser.add_argument("--proxy-tool", default=str(DEFAULT_PROXY_TOOL), help=argparse.SUPPRESS)
     parser.add_argument("--protocol-tool", default=str(DEFAULT_PROTOCOL_TOOL), help=argparse.SUPPRESS)
@@ -68,6 +75,8 @@ class RuntimeManager:
             "listen_host": self.args.listen_host,
             "connect_host": normalize_tcp_client_host(self.args.connect_host),
             "listen_port": self.args.listen_port,
+            "protocol_sidecar_mode": self.args.protocol_sidecar_mode,
+            "protocol_sidecar_enabled": self.should_start_protocol_sidecar(),
             "proxy": process_state(self.proxy_process, self.proxy_restart_count),
             "protocol": process_state(self.protocol_process, self.protocol_restart_count),
         }
@@ -78,6 +87,15 @@ class RuntimeManager:
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
         self.write_status()
+
+    def should_start_protocol_sidecar(self) -> bool:
+        mode = self.args.protocol_sidecar_mode
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        listen_host = self.args.listen_host.strip().strip("[]").lower()
+        return listen_host in LOOPBACK_BIND_HOSTS
 
     def _spawn(self, name: str, command: list[str]) -> subprocess.Popen[str]:
         LOGGER.info("starting %s: %s", name, " ".join(command))
@@ -146,7 +164,14 @@ class RuntimeManager:
         signal.signal(signal.SIGTERM, self.request_stop)
 
         self.start_proxy()
-        self.start_protocol()
+        if self.should_start_protocol_sidecar():
+            self.start_protocol()
+        else:
+            LOGGER.info(
+                "protocol sidecar disabled for listen host %s (mode=%s)",
+                self.args.listen_host,
+                self.args.protocol_sidecar_mode,
+            )
         self.write_status()
 
         exit_code = 0

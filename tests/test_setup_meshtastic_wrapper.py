@@ -407,6 +407,7 @@ cat "$PROXY_LOG_FILE"
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn(f"nohup:{REPO_ROOT}/.venv/bin/python {REPO_ROOT}/tools/meshtastic_runtime_manager.py --serial-port", result.stdout)
+        self.assertIn("--protocol-sidecar-mode auto", result.stdout)
 
     def test_proxy_unit_uses_runtime_manager_without_protocol_unit_dependency(self) -> None:
         result = run_wrapper_snippet(
@@ -418,6 +419,7 @@ proxy_unit_content user
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertNotIn("Wants=meshtastic-protocol.service", result.stdout)
         self.assertIn(f"{REPO_ROOT}/tools/meshtastic_runtime_manager.py", result.stdout)
+        self.assertIn(r"--protocol-sidecar-mode ${MESHTASTIC_PROTOCOL_SIDECAR_MODE}", result.stdout)
 
     def test_main_dispatches_telemetry(self) -> None:
         result = run_wrapper_snippet(

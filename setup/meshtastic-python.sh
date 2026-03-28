@@ -43,6 +43,7 @@ PROXY_TOOL="${ROOT_DIR}/tools/meshtastic_proxy.py"
 CONSOLE_TOOL="${ROOT_DIR}/console/contact.sh"
 PORT_WAIT_SECONDS="${MESHTASTIC_PORT_WAIT_SECONDS:-30}"
 PROTOCOL_LOG_NAME="${MESHTASTIC_PROTOCOL_LOG_NAME:-protocol}"
+PROTOCOL_SIDECAR_MODE="${MESHTASTIC_PROTOCOL_SIDECAR_MODE:-auto}"
 PROXY_PID_FILE="${RUNTIME_DIR}/proxy.pid"
 PROXY_LOG_FILE="${RUNTIME_DIR}/proxy.log"
 PROXY_STATUS_FILE="${RUNTIME_DIR}/proxy-status.json"
@@ -133,6 +134,7 @@ Environment:
   MESHTASTIC_PROXY_BIND_HOST Override the local proxy bind host (default: 127.0.0.1)
   MESHTASTIC_PROXY_HOST Override the host wrappers should use when the local proxy is running (default: 127.0.0.1)
   MESHTASTIC_PROTOCOL_LOG_NAME Override the protocol sidecar log basename (default: protocol)
+  MESHTASTIC_PROTOCOL_SIDECAR_MODE Control runtime-manager protocol sidecar startup: auto, on, or off (default: auto)
   MESHTASTIC_BAUD Override the UART baud rate for rawlog (default: 115200)
   MESHTASTIC_LOG_SECONDS Override rawlog capture duration in seconds (default: 20)
   MESHTASTIC_REGION Override the region used by provision (default: EU_868)
@@ -481,6 +483,9 @@ service_config_value() {
     MESHTASTIC_PROTOCOL_LOG_NAME)
       printf '%s\n' "${PROTOCOL_LOG_NAME}"
       ;;
+    MESHTASTIC_PROTOCOL_SIDECAR_MODE)
+      printf '%s\n' "${PROTOCOL_SIDECAR_MODE}"
+      ;;
     *)
       return 1
       ;;
@@ -496,6 +501,7 @@ MESHTASTIC_TCP_PORT=$(printf '%q' "${TCP_PORT}")
 MESHTASTIC_PROXY_BIND_HOST=$(printf '%q' "${PROXY_BIND_HOST}")
 MESHTASTIC_PROXY_HOST=$(printf '%q' "${PROXY_CONNECT_HOST}")
 MESHTASTIC_PROTOCOL_LOG_NAME=$(printf '%q' "${PROTOCOL_LOG_NAME}")
+MESHTASTIC_PROTOCOL_SIDECAR_MODE=$(printf '%q' "${PROTOCOL_SIDECAR_MODE}")
 EOF
 }
 
@@ -542,7 +548,8 @@ warn_if_service_config_differs() {
     MESHTASTIC_TCP_PORT \
     MESHTASTIC_PROXY_BIND_HOST \
     MESHTASTIC_PROXY_HOST \
-    MESHTASTIC_PROTOCOL_LOG_NAME; do
+    MESHTASTIC_PROTOCOL_LOG_NAME \
+    MESHTASTIC_PROTOCOL_SIDECAR_MODE; do
     configured="$(sed -n "s/^${key}=//p" "${SERVICE_CONFIG_FILE}" | head -n1)"
     current="$(printf '%q' "$(service_config_value "${key}")")"
     if [[ -n "${configured}" && "${configured}" != "${current}" ]]; then
@@ -941,7 +948,7 @@ Type=simple
 WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
 EnvironmentFile=${SERVICE_CONFIG_FILE}
-ExecStart=${VENV_PYTHON} ${RUNTIME_MANAGER_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --connect-host \${MESHTASTIC_PROXY_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE} --config-file ${SERVICE_CONFIG_FILE} --protocol-log-name \${MESHTASTIC_PROTOCOL_LOG_NAME}
+ExecStart=${VENV_PYTHON} ${RUNTIME_MANAGER_TOOL} --serial-port \${MESHTASTIC_PORT} --baud \${MESHTASTIC_BAUD} --listen-host \${MESHTASTIC_PROXY_BIND_HOST} --connect-host \${MESHTASTIC_PROXY_HOST} --listen-port \${MESHTASTIC_TCP_PORT} --status-file ${PROXY_STATUS_FILE} --config-file ${SERVICE_CONFIG_FILE} --protocol-log-name \${MESHTASTIC_PROTOCOL_LOG_NAME} --protocol-sidecar-mode \${MESHTASTIC_PROTOCOL_SIDECAR_MODE}
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
@@ -2074,6 +2081,7 @@ proxy_start() {
     --status-file "${PROXY_STATUS_FILE}" \
     --config-file "${SERVICE_CONFIG_FILE}" \
     --protocol-log-name "${PROTOCOL_LOG_NAME}" \
+    --protocol-sidecar-mode "${PROTOCOL_SIDECAR_MODE}" \
     >>"${PROXY_LOG_FILE}" 2>&1 &
   echo "$!" > "${PROXY_PID_FILE}"
 

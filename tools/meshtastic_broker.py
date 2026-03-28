@@ -238,6 +238,12 @@ class ObservedRadioFrame:
 
 
 @dataclass
+class RadioObservation:
+    text_chunks: list[bytes] = field(default_factory=list)
+    frames: list[ObservedRadioFrame] = field(default_factory=list)
+
+
+@dataclass
 class SerialDebugThrottleState:
     last_log_at: float = float("-inf")
     suppressed_chunks: int = 0
@@ -392,7 +398,7 @@ class MeshtasticBroker:
 
         return decision
 
-    def observe_radio_bytes(self, data: bytes) -> list[ObservedRadioFrame]:
+    def observe_radio_bytes(self, data: bytes) -> RadioObservation:
         self._expire_control_owner_if_needed()
         self._expire_host_session_owner_if_needed()
         parsed = self.radio_parser.feed(data)
@@ -412,7 +418,7 @@ class MeshtasticBroker:
                 continue
             self._observe_fromradio(message)
             observed.append(ObservedRadioFrame(frame=frame, message=message))
-        return observed
+        return RadioObservation(text_chunks=list(parsed.text_chunks), frames=observed)
 
     def _observe_fromradio(self, message: mesh_pb2.FromRadio) -> None:
         if not message.HasField("packet"):
