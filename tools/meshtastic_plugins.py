@@ -61,6 +61,19 @@ class MeshtasticPluginManager:
     def dispatch_first_client_call(self, relative_paths: list[str], event: dict[str, object], api: dict[str, object]) -> bool:
         return self._dispatch_first(relative_paths, "handle_client_call", event, api)
 
+    def call_relative(self, relative_path: str, function_name: str, event: dict[str, object], api: dict[str, object]) -> object | None:
+        self._prune_deleted_plugins()
+        path = self.plugins_dir / relative_path
+        if not path.exists():
+            return None
+        plugin = self._load_plugin(path)
+        if plugin is None:
+            return None
+        handler = getattr(plugin.module, function_name, None)
+        if not callable(handler):
+            return None
+        return self._call(plugin.path, function_name, handler, event, api)
+
     def _all_plugins(self) -> list[LoadedPlugin]:
         self._prune_deleted_plugins()
         if not self.plugins_dir.exists():
@@ -212,14 +225,15 @@ class MeshtasticPluginManager:
         handler,
         event: dict[str, object],
         api: dict[str, object],
-    ) -> None:
+    ) -> object | None:
         plugin_api = dict(api)
         plugin_api["plugin_name"] = self._display_name(path)[: -len(PLUGIN_SUFFIX)]
         plugin_api["plugin_path"] = str(path)
         try:
-            handler(event, plugin_api)
+            return handler(event, plugin_api)
         except Exception:
             self.logger.exception("plugin handler failed: %s:%s", self._display_name(path), function_name)
+            return None
 
 
 def plugin_storage_path(runtime_dir: str | os.PathLike[str], plugin_name: str, relative_path: str = "") -> Path:

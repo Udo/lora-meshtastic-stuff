@@ -740,6 +740,28 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["word:hello"])
 
+    def test_direct_message_handler_first_runs_before_specific_handler(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-handler-first.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "handler_first.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('first\\n')\n",
+            encoding="utf-8",
+        )
+        (dm_dir / "hello.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('word\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello there", from_node=42, to_node=777))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["first"])
+
     def test_direct_message_falls_back_to_sender_short_name_then_generic(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-sender.txt"
         dm_dir = self.plugins_dir / "DM"
@@ -756,6 +778,33 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         wait_until(lambda: output_file.exists())
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["PEER"])
+
+    def test_direct_message_chain_can_continue_into_dm_mode_with_rewritten_message(self) -> None:
+        pathlib.Path(self.config_file).write_text("dm_mode=work\n", encoding="utf-8")
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-mode-chain.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        dm_mode_dir = self.plugins_dir / "DM_work"
+        dm_mode_dir.mkdir()
+        (dm_dir / "handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            "    message = api['mesh_pb2'].FromRadio()\n"
+            "    message.CopyFrom(event['message'])\n"
+            "    message.packet.decoded.payload = b'clean request'\n"
+            "    return {'continue_chain': True, 'message': message}\n",
+            encoding="utf-8",
+        )
+        (dm_mode_dir / "clean.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write(event['payload'].decode('utf-8') + ':' + str(event.get('dm_command')) + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"dirty request", from_node=42, to_node=777))
+        wait_until(lambda: output_file.exists())
+
+        self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["clean request:clean"])
 
     def test_direct_message_plugin_hot_reloads_under_dm_directory(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-reload.txt"
@@ -784,6 +833,69 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         wait_until(lambda: "v2:SECOND" in output_file.read_text(encoding="utf-8"))
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ["v1:first", "v2:SECOND"])
+
+    def test_direct_message_picks_up_new_handler_created_after_previous_call(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-created.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('generic:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello one", from_node=70, to_node=777))
+        wait_until(lambda: output_file.exists() and "generic:hello one" in output_file.read_text(encoding="utf-8"))
+
+        time.sleep(0.02)
+        (dm_dir / "hello.handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('word:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello two", from_node=70, to_node=777))
+        wait_until(lambda: "word:hello two" in output_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            output_file.read_text(encoding="utf-8").splitlines(),
+            ["generic:hello one", "word:hello two"],
+        )
+
+    def test_direct_message_falls_back_when_specific_handler_is_deleted(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-deleted.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        generic_path = dm_dir / "handler.py"
+        specific_path = dm_dir / "hello.handler.py"
+        generic_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('generic:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+        specific_path.write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('word:' + event['payload'].decode('utf-8') + '\\n')\n",
+            encoding="utf-8",
+        )
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello one", from_node=70, to_node=777))
+        wait_until(lambda: output_file.exists() and "word:hello one" in output_file.read_text(encoding="utf-8"))
+
+        time.sleep(0.02)
+        specific_path.unlink()
+
+        self.fake_serial.inject_read(make_fromradio_direct_text_frame(b"hello two", from_node=70, to_node=777))
+        wait_until(lambda: "generic:hello two" in output_file.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            output_file.read_text(encoding="utf-8").splitlines(),
+            ["word:hello one", "generic:hello two"],
+        )
 
 
 class StoreForwardPluginTests(unittest.TestCase):

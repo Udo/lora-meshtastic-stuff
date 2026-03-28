@@ -272,13 +272,22 @@ For `PRIVATE_APP`, the router now supports subtype dispatch:
 - if the payload starts with `type=<value>`, it tries `plugins/PRIVATE_APP.<value>.handler.py`
 - if no typed handler exists, it falls back to `plugins/PRIVATE_APP.handler.py`
 
-Inbound direct text messages also support a DM handler namespace:
+Inbound direct text messages also support a DM handler chain. The reserved base namespace is `plugins/DM/`, and if the proxy config file sets `dm_mode`, it appends a second namespace under `plugins/DM_<dm_mode>/`.
 
+The DM router only applies to incoming `TEXT_MESSAGE_APP` packets whose destination is non-zero. Resolution order is:
+
+- `plugins/DM/handler_first.py`
 - `plugins/DM/<first word>.handler.py`
 - `plugins/DM/<sender short name>.handler.py`
 - `plugins/DM/handler.py`
+- `plugins/DM_<dm_mode>/handler_first.py`
+- `plugins/DM_<dm_mode>/<first word>.handler.py`
+- `plugins/DM_<dm_mode>/<sender short name>.handler.py`
+- `plugins/DM_<dm_mode>/handler.py`
 
-The DM router only applies to incoming `TEXT_MESSAGE_APP` packets whose destination is non-zero, and it stops at the first callable match.
+DM handlers stop the chain by default. To continue, return a dict containing `continue_chain: True`. A handler can also return `message: <FromRadio>` so downstream DM handlers see a rewritten message.
+
+The detailed DM documentation, including examples for `handler_first.py`, sender-specific handlers, sanitizers, `dm_mode`, and continue/rewrite chaining, lives in [docs/meshtastic_plugins.md](docs/meshtastic_plugins.md).
 
 Supported plugin entry points:
 

@@ -22,6 +22,7 @@
 - Delegates client-to-radio arbitration to `meshtastic_broker.py`.
 - Discovers packet handlers from the repo-local `plugins/` directory using `PORTNAME.handler.py` or `PORTNUM.handler.py` filenames.
 - For `PRIVATE_APP`, also supports subtype routing via `PRIVATE_APP.<type>.handler.py` when the payload exposes a parseable `type`.
+- For inbound direct text messages, also supports the DM handler chain under `plugins/DM/` and optionally `plugins/DM_<dm_mode>/`.
 - Hot-reloads changed handler files without restarting the proxy.
 - Calls optional plugin entry points `handle_packet(event, api)`, `handle_client_call(event, api)`, and `tick(event, api)`.
 - Exposes a host-extension API so plugins can inspect mesh packets, persist state, and emit reply packets through the attached node without replacing firmware behavior.
@@ -106,3 +107,13 @@ tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
 - JSON payloads with a top-level string `type` field route to `plugins/PRIVATE_APP.<type>.handler.py`
 - payloads beginning with `type=<value>` route to `plugins/PRIVATE_APP.<value>.handler.py`
 - if no subtype-specific handler exists, the proxy falls back to `plugins/PRIVATE_APP.handler.py`
+
+Direct-message routing rules:
+
+- only inbound `TEXT_MESSAGE_APP` packets with `packet_to != 0` enter the DM chain
+- the base namespace is `plugins/DM/`
+- if the proxy config file defines `dm_mode`, a second namespace `plugins/DM_<dm_mode>/` is appended after the base namespace
+- per namespace, the order is `handler_first.py`, first-word handler, sender-shortname handler, then `handler.py`
+- a DM handler can return `{"continue_chain": True}` to continue or also include `message: <mesh_pb2.FromRadio>` to rewrite the packet seen by downstream DM handlers
+
+For the full DM behavior, examples, and caveats around sender short names, see [meshtastic_plugins.md](./meshtastic_plugins.md).

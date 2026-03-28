@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import sys
@@ -41,6 +42,7 @@ CLIENT_KEEPALIVE_INTERVAL_SECONDS = 15
 CLIENT_KEEPALIVE_PROBES = 4
 DM_PLUGIN_DIRNAME = "DM"
 SERIAL_WAIT_SLICE_SECONDS = 0.25
+DM_MODE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass(eq=False)
@@ -123,6 +125,7 @@ class MeshtasticProxy:
                 "listen_host": self.listen_host,
                 "listen_port": self.listen_port,
                 "config_file": self.config_file,
+                "dm_mode": self._dm_mode(),
                 "plugins_dir": self.plugins_dir,
                 "plugin_state_dir": str(self.plugin_state_dir),
                 "plugins_loaded": self.plugins.plugin_names(),
@@ -446,6 +449,49 @@ class MeshtasticProxy:
         portnum = int(packet.decoded.portnum)
         return portnum, self._portnum_name(portnum)
 
+    def _load_proxy_config(self) -> dict[str, str]:
+        if not self.config_file:
+            return {}
+        path = Path(self.config_file)
+        if not path.exists():
+            return {}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            LOGGER.debug("could not read proxy config file %s: %s", path, exc)
+            return {}
+
+        values: dict[str, str] = {}
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'").strip('"')
+            if key:
+                values[key] = value
+        return values
+
+    def _dm_mode(self) -> str | None:
+        config = self._load_proxy_config()
+        raw_value = (
+            config.get("dm_mode")
+            or config.get("DM_MODE")
+            or config.get("MESHTASTIC_DM_MODE")
+        )
+        if not raw_value:
+            return None
+        value = raw_value.strip()
+        if not DM_MODE_RE.fullmatch(value):
+            LOGGER.warning("ignoring invalid dm_mode from %s: %r", self.config_file, raw_value)
+            return None
+        return value
+
     def _remember_node_short_name(self, packet, portnum_name: str | None) -> None:
         if packet is None or portnum_name != "NODEINFO_APP":
             return
@@ -482,26 +528,82 @@ class MeshtasticProxy:
         packet_to = int(event.get("packet_to") or 0)
         return packet_to != 0
 
+    def _dm_namespace_paths(self, namespace: str, event: dict[str, object]) -> list[str]:
+        candidate_paths = [f"{namespace}/handler_first.py"]
+        first_word = self._direct_message_first_word(bytes(event.get("payload") or b""))
+        if first_word:
+            candidate_paths.append(f"{namespace}/{first_word}.handler.py")
+        sender_short_name = self._node_short_names.get(int(event.get("packet_from") or 0))
+        if sender_short_name:
+            candidate_paths.append(f"{namespace}/{sender_short_name}.handler.py")
+        candidate_paths.append(f"{namespace}/handler.py")
+        return candidate_paths
+
+    def _event_from_message(self, message: mesh_pb2.FromRadio, frame: bytes | None = None) -> dict[str, object] | None:
+        packet = message.packet if message.HasField("packet") else None
+        portnum, portnum_name = self._packet_portnum(packet)
+        if packet is None or portnum is None:
+            return None
+        event = {
+            "event_type": "packet",
+            "direction": "radio_to_clients",
+            "frame": frame if frame is not None else encode_frame(message.SerializeToString()),
+            "message": message,
+            "mesh_packet": packet,
+            "payload": bytes(packet.decoded.payload),
+            "portnum": portnum,
+            "portnum_name": portnum_name,
+            "plugin_origin_likely": self._is_recent_plugin_send(portnum, bytes(packet.decoded.payload), int(getattr(packet, "to", 0))),
+            "ts": time.time(),
+        }
+        event.update(self._message_metadata(message, packet, "radio_to_clients"))
+        return event
+
+    def _apply_dm_handler_result(self, result: object, event: dict[str, object]) -> tuple[bool, dict[str, object]]:
+        if not isinstance(result, dict):
+            return False, event
+
+        continue_chain = bool(result.get("continue_chain") or result.get("continue"))
+        next_event = event
+        message = result.get("message")
+        if message is not None:
+            if isinstance(message, mesh_pb2.FromRadio):
+                rebuilt_event = self._event_from_message(message)
+                if rebuilt_event is not None:
+                    next_event = rebuilt_event
+                else:
+                    LOGGER.warning("dm plugin returned FromRadio without decoded packet; ignoring message rewrite")
+            else:
+                LOGGER.warning("dm plugin returned unsupported message type: %s", type(message).__name__)
+        return continue_chain, next_event
+
     def _dispatch_dm_plugins(self, event: dict[str, object], api: dict[str, object]) -> bool:
         if not self._is_direct_message_event(event):
             return False
 
-        candidate_paths: list[str] = []
-        first_word = self._direct_message_first_word(bytes(event.get("payload") or b""))
-        if first_word:
-            candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/{first_word}.handler.py")
+        handled = False
+        current_event = dict(event)
+        namespaces = [DM_PLUGIN_DIRNAME]
+        dm_mode = self._dm_mode()
+        if dm_mode:
+            namespaces.append(f"{DM_PLUGIN_DIRNAME}_{dm_mode}")
 
-        packet_from = int(event.get("packet_from") or 0)
-        sender_short_name = self._node_short_names.get(packet_from)
-        if sender_short_name:
-            candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/{sender_short_name}.handler.py")
-
-        candidate_paths.append(f"{DM_PLUGIN_DIRNAME}/handler.py")
-
-        event["direct_message"] = True
-        event["dm_command"] = first_word
-        event["sender_short_name"] = sender_short_name
-        return self.plugins.dispatch_first_packet(candidate_paths, event, api)
+        for namespace in namespaces:
+            for relative_path in self._dm_namespace_paths(namespace, current_event):
+                current_event["direct_message"] = True
+                current_event["dm_command"] = self._direct_message_first_word(bytes(current_event.get("payload") or b""))
+                current_event["sender_short_name"] = self._node_short_names.get(int(current_event.get("packet_from") or 0))
+                result = self.plugins.call_relative(relative_path, "handle_packet", current_event, api)
+                if result is None and not (Path(self.plugins_dir) / relative_path).exists():
+                    continue
+                if result is None and (Path(self.plugins_dir) / relative_path).exists():
+                    handled = True
+                    return handled
+                handled = True
+                continue_chain, current_event = self._apply_dm_handler_result(result, current_event)
+                if not continue_chain:
+                    return handled
+        return handled
 
     def _handle_radio_plugins(self, observed_frames) -> None:
         api = self.build_plugin_api()
