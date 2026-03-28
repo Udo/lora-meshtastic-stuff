@@ -589,6 +589,9 @@ proxy_autostart_install_user
         self.assertIn(f"EnvironmentFile={REPO_ROOT}/.runtime/meshtastic/service.env\n", result.stdout)
         self.assertIn(r"${MESHTASTIC_PROXY_HOST}", result.stdout)
         self.assertIn(r"${MESHTASTIC_PROTOCOL_LOG_NAME}", result.stdout)
+        self.assertIn("Restart=on-failure\n", result.stdout)
+        self.assertIn("TimeoutStartSec=20\n", result.stdout)
+        self.assertIn("TimeoutStopSec=5\n", result.stdout)
 
     def test_proxy_service_start_uses_system_manager_when_installed(self) -> None:
         result = run_wrapper_snippet(

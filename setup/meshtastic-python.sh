@@ -982,8 +982,10 @@ WorkingDirectory=${ROOT_DIR}
 ${extra_service_lines}
 EnvironmentFile=${SERVICE_CONFIG_FILE}
 ExecStart=${VENV_PYTHON} ${PROTOCOL_TOOL} --host \${MESHTASTIC_PROXY_HOST} --tcp-port \${MESHTASTIC_TCP_PORT} \${MESHTASTIC_PROTOCOL_LOG_NAME} --quiet
-Restart=always
+Restart=on-failure
 RestartSec=2
+TimeoutStartSec=20
+TimeoutStopSec=5
 Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal

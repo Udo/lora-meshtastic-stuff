@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -89,6 +90,40 @@ class MeshtasticProtocolTests(unittest.TestCase):
         self.assertEqual(record["event"], "node-update")
         self.assertEqual(record["node_id"], "!peer")
         self.assertIn("Peer Node", record["summary"])
+
+    def test_wait_for_tcp_target_retries_until_ready(self) -> None:
+        args = protocol.build_parser().parse_args(["--host", "127.0.0.1", "--connect-wait-seconds", "1", "protocol"])
+        logger = protocol.ProtocolLogger(args)
+
+        with mock.patch.object(protocol, "tcp_endpoint_ready", side_effect=[False, False, True]):
+            with mock.patch.object(protocol.time, "sleep", return_value=None):
+                self.assertTrue(logger.wait_for_tcp_target())
+
+    def test_wait_for_tcp_target_times_out(self) -> None:
+        args = protocol.build_parser().parse_args(["--host", "127.0.0.1", "--connect-wait-seconds", "0.5", "protocol"])
+        logger = protocol.ProtocolLogger(args)
+
+        monotonic_values = iter([0.0, 0.1, 0.3, 0.6])
+        with mock.patch.object(protocol, "tcp_endpoint_ready", return_value=False):
+            with mock.patch.object(protocol.time, "sleep", return_value=None):
+                with mock.patch.object(protocol.time, "monotonic", side_effect=lambda: next(monotonic_values)):
+                    self.assertFalse(logger.wait_for_tcp_target())
+
+    def test_request_stop_closes_open_interface(self) -> None:
+        args = protocol.build_parser().parse_args(["protocol"])
+        logger = protocol.ProtocolLogger(args)
+
+        closed = {"value": False}
+
+        class CloseableInterface:
+            def close(self):
+                closed["value"] = True
+
+        logger.interface = CloseableInterface()
+        logger.request_stop()
+
+        self.assertTrue(logger.stop_requested)
+        self.assertTrue(closed["value"])
 
 
 if __name__ == "__main__":

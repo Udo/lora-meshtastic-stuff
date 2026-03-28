@@ -17,6 +17,7 @@ from _meshtastic_common import (
     resolve_meshtastic_target,
     strip_raw,
     style,
+    tcp_endpoint_ready,
 )
 from meshtastic_messages import (
     append_log_line,
@@ -208,6 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-dir", default="", help="Override the transcript directory; defaults to MESHTASTIC_LOG_DIR or ~/.local/log/meshtastic")
     parser.add_argument("log_name", nargs="?", default=DEFAULT_LOG_NAME, help="Log file name under the transcript directory without the .log suffix")
     parser.add_argument("--timeout", type=float, default=0.0, help="Optional number of seconds to run before exiting; 0 means forever")
+    parser.add_argument("--connect-wait-seconds", type=float, default=0.0, help="For TCP mode, wait up to this many seconds for the proxy/host to accept connections before failing")
     parser.add_argument("--quiet", action="store_true", help="Write only to the log file and suppress stdout")
     parser.add_argument("--include-log-lines", action="store_true", help="Also persist meshtastic.log.line events")
     return parser
@@ -224,6 +226,26 @@ class ProtocolLogger:
 
     def request_stop(self, _signum=None, _frame=None) -> None:
         self.stop_requested = True
+        interface = self.interface
+        if interface is not None:
+            try:
+                interface.close()
+            except Exception:
+                pass
+
+    def wait_for_tcp_target(self) -> bool:
+        wait_seconds = max(float(self.args.connect_wait_seconds), 0.0)
+        if self.target.mode != "tcp" or wait_seconds <= 0:
+            return True
+
+        deadline = time.monotonic() + wait_seconds
+        while not self.stop_requested:
+            if tcp_endpoint_ready(self.target.host, self.target.tcp_port, timeout=1.0):
+                return True
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.25)
+        return False
 
     def emit_record(self, record: dict[str, object]) -> None:
         line = format_log_line(record)
@@ -245,6 +267,12 @@ class ProtocolLogger:
         pub.subscribe(self.on_event, pub.ALL_TOPICS)
         try:
             try:
+                if not self.wait_for_tcp_target():
+                    print(
+                        f"Could not connect to {self.target.host}:{self.target.tcp_port}: timed out waiting for TCP readiness.",
+                        file=sys.stderr,
+                    )
+                    return 1
                 self.interface = connect_interface_for_target(
                     self.target,
                     serial_factory=SerialInterface,
