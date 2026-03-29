@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from meshtastic.mesh_interface import MeshInterface
+from meshtastic.protobuf import storeforward_pb2
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -17,6 +18,69 @@ import meshtastic_monitor as monitor
 
 
 class MeshtasticMonitorTests(unittest.TestCase):
+    def test_packet_preview_decodes_store_forward_client_history(self) -> None:
+        request = storeforward_pb2.StoreAndForward(rr=storeforward_pb2.StoreAndForward.CLIENT_HISTORY)
+        request.history.history_messages = 10
+        request.history.window = 60
+        request.history.last_request = 0
+        packet = {
+            "decoded": {
+                "portnum": "STORE_FORWARD_APP",
+                "payload": request.SerializeToString(),
+            }
+        }
+
+        self.assertEqual(
+            monitor.packet_preview(packet),
+            "store-forward=client-history messages=10 window=60 last_request=0",
+        )
+
+    def test_packet_preview_decodes_store_forward_router_stats(self) -> None:
+        response = storeforward_pb2.StoreAndForward(rr=storeforward_pb2.StoreAndForward.ROUTER_STATS)
+        response.stats.messages_total = 2
+        response.stats.messages_saved = 2
+        response.stats.requests = 5
+        response.stats.requests_history = 3
+        response.stats.heartbeat = True
+        response.stats.return_max = 20
+        response.stats.return_window = 60
+        packet = {
+            "decoded": {
+                "portnum": "STORE_FORWARD_APP",
+                "payload": response.SerializeToString(),
+            }
+        }
+
+        self.assertEqual(
+            monitor.packet_preview(packet),
+            "store-forward=router-stats saved=2 total=2 requests=5 history_requests=3 heartbeat=on return_max=20 return_window=60",
+        )
+
+    def test_packet_preview_formats_routing_ack_without_error_wording(self) -> None:
+        packet = {
+            "toId": "!peer",
+            "decoded": {
+                "requestId": 1234,
+                "routing": {"errorReason": "NONE"},
+            },
+        }
+
+        self.assertEqual(monitor.packet_preview(packet), "ack (requestId=1234, to=!peer)")
+
+    def test_packet_preview_formats_routing_failures_as_errors(self) -> None:
+        packet = {
+            "toId": "!peer",
+            "decoded": {
+                "requestId": 5678,
+                "routing": {"errorReason": "NO_RESPONSE"},
+            },
+        }
+
+        self.assertEqual(
+            monitor.packet_preview(packet),
+            "routing-error=NO_RESPONSE (requestId=5678, to=!peer)",
+        )
+
     def test_connect_interface_starts_tcp_reader_without_waiting_for_full_handshake(self) -> None:
         args = monitor.build_parser().parse_args([
             "--host",

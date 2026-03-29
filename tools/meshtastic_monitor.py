@@ -30,6 +30,7 @@ ensure_repo_python("MESHTASTIC_MONITOR_VENV_EXEC")
 try:
     from pubsub import pub
     from meshtastic.mesh_interface import MeshInterface
+    from meshtastic.protobuf import storeforward_pb2
     from meshtastic.serial_interface import SerialInterface
     from meshtastic.tcp_interface import TCPInterface
     from serial.serialutil import SerialException
@@ -78,6 +79,64 @@ def packet_sender_column(packet: dict, iface=None) -> str:
     return packet_sender_label(packet)
 
 
+def store_forward_preview(decoded: dict) -> str | None:
+    portnum = decoded.get("portnum")
+    if portnum != "STORE_FORWARD_APP":
+        return None
+
+    payload = decoded.get("payload")
+    if not isinstance(payload, bytes):
+        return "store-forward payload=<unavailable>"
+
+    message = storeforward_pb2.StoreAndForward()
+    try:
+        message.ParseFromString(payload)
+    except Exception:
+        return f"store-forward payload=<{len(payload)} bytes>"
+
+    rr_value = int(message.rr)
+    try:
+        rr_name = storeforward_pb2.StoreAndForward.RequestResponse.Name(rr_value).lower().replace("_", "-")
+    except ValueError:
+        rr_name = str(rr_value)
+
+    parts = [f"store-forward={rr_name}"]
+    variant = message.WhichOneof("variant")
+
+    if variant == "stats":
+        parts.extend(
+            [
+                f"saved={message.stats.messages_saved}",
+                f"total={message.stats.messages_total}",
+                f"requests={message.stats.requests}",
+                f"history_requests={message.stats.requests_history}",
+                f"heartbeat={'on' if message.stats.heartbeat else 'off'}",
+                f"return_max={message.stats.return_max}",
+                f"return_window={message.stats.return_window}",
+            ]
+        )
+    elif variant == "history":
+        parts.extend(
+            [
+                f"messages={message.history.history_messages}",
+                f"window={message.history.window}",
+                f"last_request={message.history.last_request}",
+            ]
+        )
+    elif variant == "heartbeat":
+        parts.extend(
+            [
+                f"period={message.heartbeat.period}",
+                f"secondary={message.heartbeat.secondary}",
+            ]
+        )
+    elif variant == "text":
+        text = bytes(message.text).decode("utf-8", errors="replace")
+        parts.append(f"text={json.dumps(text)}")
+
+    return " ".join(parts)
+
+
 def sender_column(topic_name: str, kwargs: dict) -> str:
     if not topic_name.startswith("meshtastic.receive"):
         return " " * 5
@@ -89,6 +148,28 @@ def sender_column(topic_name: str, kwargs: dict) -> str:
 
 def packet_preview(packet: dict, iface=None) -> str:
     decoded = packet.get("decoded", {})
+    if isinstance(decoded.get("routing"), dict):
+        routing = strip_raw(decoded["routing"])
+        reason = str(routing.get("errorReason") or "NONE")
+        request_id = decoded.get("requestId")
+        destination = packet.get("toId")
+        if iface is not None:
+            identity = lookup_identity(iface, node_num=packet.get("to"), node_id=str(destination or ""))
+            destination = identity.short_name or identity.node_id or destination
+        details: list[str] = []
+        if request_id is not None:
+            details.append(f"requestId={request_id}")
+        if destination:
+            details.append(f"to={destination}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        if reason == "NONE":
+            return f"ack{suffix}"
+        return f"routing-error={reason}{suffix}"
+
+    store_forward_summary = store_forward_preview(decoded)
+    if store_forward_summary is not None:
+        return store_forward_summary
+
     for key in ("text", "position", "user", "telemetry", "routing", "neighborInfo"):
         if key in decoded:
             value = strip_raw(decoded[key])
