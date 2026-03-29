@@ -359,7 +359,7 @@ Current store-forward storage behavior:
 - each blob is content-addressed by a hash over stable message fields, while the dated event logs preserve arrival order and can preserve duplicates
 - the logical retention window is the last 30 days
 - optional `ROUTER_HEARTBEAT` emission is handled from `STORE_FORWARD_APP.tick()` using plugin-local config
-- heartbeat is enabled by default and this repo uses a default interval of `3600` seconds
+- heartbeat is enabled by default and this repo uses a default interval of `1021` seconds
 - duplicate replay is disabled by default and can be enabled with the plugin-local `replay_duplicates` flag
 - `STORE_FORWARD_APP.tick()` performs physical cleanup at most once per day
 - malformed plugin storage is skipped with warning logs instead of aborting stats, replay, or cleanup
@@ -368,7 +368,7 @@ Current store-forward storage behavior:
 ```bash
 tools/meshtastic_plugins.py STORE_FORWARD_APP stats
 ./setup/meshtastic-python.sh plugins STORE_FORWARD_APP stats
-tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 3600
+tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 1021
 tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
 ```
 

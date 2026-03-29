@@ -582,7 +582,7 @@ Current flag:
 Default:
 
 - `heartbeat_enabled = true`
-- `heartbeat_interval_secs = 3600`
+- `heartbeat_interval_secs = 1021`
 - `heartbeat_secondary = false`
 - `replay_duplicates = false`
 
@@ -590,13 +590,13 @@ With the default setting, repeated identical messages are stored in the event lo
 
 If heartbeat is enabled, `STORE_FORWARD_APP.tick()` emits `ROUTER_HEARTBEAT` packets through the real node on the store-and-forward port. The heartbeat packet includes the configured period and whether this service should identify itself as secondary.
 
-The upstream protobufs define the heartbeat packet and a boolean store-forward heartbeat setting, but they do not document a default interval in the protobuf comments. The `3600`-second value is therefore this repo's default, not a Meshtastic protocol default.
+The upstream protobufs define the heartbeat packet and a boolean store-forward heartbeat setting, but they do not document a default interval in the protobuf comments. This repo now defaults to `1021` seconds so its host-emitted `ROUTER_HEARTBEAT` matches the cadence observed from native store-forward broadcasters like `FD1H`.
 
 Inspect or change it with:
 
 ```bash
 tools/meshtastic_plugins.py STORE_FORWARD_APP config
-tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 3600
+tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 1021
 tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
 tools/meshtastic_plugins.py STORE_FORWARD_APP stats
 ./setup/meshtastic-python.sh plugins STORE_FORWARD_APP config --replay-duplicates no

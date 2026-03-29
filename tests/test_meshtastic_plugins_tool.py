@@ -152,7 +152,7 @@ class MeshtasticPluginsToolTests(unittest.TestCase):
             self.assertIn("plugin: STORE_FORWARD_APP", output)
             self.assertIn("retention_days: 30", output)
             self.assertIn("heartbeat_enabled: True", output)
-            self.assertIn("heartbeat_interval_secs: 3600", output)
+            self.assertIn("heartbeat_interval_secs: 1021", output)
             self.assertIn("replay_duplicates: False", output)
             self.assertIn("history_events: 1", output)
             self.assertIn("requests: 1", output)
@@ -240,7 +240,7 @@ class MeshtasticPluginsToolTests(unittest.TestCase):
                 config,
                 {
                     "heartbeat_enabled": True,
-                    "heartbeat_interval_secs": 3600,
+                    "heartbeat_interval_secs": 1021,
                     "heartbeat_secondary": False,
                     "replay_duplicates": True,
                 },
