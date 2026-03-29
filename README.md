@@ -346,10 +346,11 @@ The `api` dictionary exposes host-extension helpers including:
 
 Handler failures are isolated from the proxy data path. Exceptions are logged and the proxy continues forwarding traffic.
 
-The repo now includes a first built-in protocol plugin pair:
+The repo now includes built-in protocol plugin examples:
 
 - `plugins/STORE_FORWARD_APP.handler.py` answers store-and-forward ping, stats, and history requests for both local proxy clients and mesh-originated packets, and exposes a self-contained `stats` tool command
 - `plugins/TEXT_MESSAGE_APP.handler.py` persists observed text packets into a content-addressed store used by that store-and-forward handler
+- `plugins/IP_TUNNEL_APP.handler.py` exposes a host-side Unix datagram bridge for `IP_TUNNEL_APP`, emits periodic same-port gateway heartbeats, and persists seen gateway announcements for service discovery
 
 Current store-forward storage behavior:
 
@@ -369,6 +370,21 @@ tools/meshtastic_plugins.py STORE_FORWARD_APP stats
 ./setup/meshtastic-python.sh plugins STORE_FORWARD_APP stats
 tools/meshtastic_plugins.py STORE_FORWARD_APP config --heartbeat yes --heartbeat-interval-secs 3600
 tools/meshtastic_plugins.py STORE_FORWARD_APP config --replay-duplicates yes
+```
+
+The IP tunnel helper for local Python consumers lives in `tools/meshtastic_ip_tunnel.py` and exposes:
+
+- `setup_ip_tunnel_client(...)` for raw `IP_TUNNEL_APP` payload access over the plugin socket
+- `setup_linux_ip_tunnel(...)` for a Linux TUN-device bridge built on top of that helper
+
+`setup_linux_ip_tunnel(...)` is stdlib-only, uses `/dev/net/tun`, assigns the interface an address derived from `local_node_num` on the synthetic `10.115.x.x` subnet by default, filters a few known chatty protocols/ports, and forwards packets by mapping the destination IP's low 16 bits back to a Meshtastic node number.
+
+The gateway advertisement layer is plugin-local and enabled by default for this repo's standard gateway plugin. Upstream Meshtastic standardizes `IP_TUNNEL_APP` as raw IP payload on port `33`, but does not appear to define an official gateway heartbeat for that port. This repo therefore layers a framework-standard same-port control envelope on top of the raw IP transport. The envelope currently uses `schema = "meshtastic.gateway.control"`, `version = 1`, `kind = "announce"`, and a `payload` object that carries the `gateway_announce` body. Raw IPv4/IPv6 payloads still pass through unchanged; non-IP payloads on `IP_TUNNEL_APP` are interpreted as service-control frames for this gateway service. Inspect or change it with:
+
+```bash
+tools/meshtastic_plugins.py IP_TUNNEL_APP status
+tools/meshtastic_plugins.py IP_TUNNEL_APP config --announce yes --announce-interval-secs 300
+tools/meshtastic_plugins.py IP_TUNNEL_APP recent --limit 20
 ```
 
 ## Protocol Logger

@@ -22,6 +22,7 @@ if str(TOOLS_DIR) not in sys.path:
 from meshtastic.protobuf import admin_pb2, channel_pb2, mesh_pb2, portnums_pb2, storeforward_pb2
 
 from tools.meshtastic_broker import FrameParser, MeshtasticBroker, decode_fromradio_frame, decode_toradio_frame, encode_frame
+from tools.meshtastic_ip_tunnel import setup_ip_tunnel_client
 from tools.meshtastic_proxy import MeshtasticProxy, maybe_add_syslog_handler
 
 
@@ -90,6 +91,15 @@ def make_private_frame(payload: bytes) -> bytes:
     to_radio.packet.decoded.portnum = portnums_pb2.PRIVATE_APP
     to_radio.packet.decoded.payload = payload
     return make_frame(to_radio)
+
+
+def make_fromradio_tunnel_frame(payload: bytes, *, from_node: int = 123, to_node: int = 456) -> bytes:
+    from_radio = mesh_pb2.FromRadio()
+    setattr(from_radio.packet, "from", from_node)
+    from_radio.packet.to = to_node
+    from_radio.packet.decoded.portnum = portnums_pb2.IP_TUNNEL_APP
+    from_radio.packet.decoded.payload = payload
+    return encode_frame(from_radio.SerializeToString())
 
 
 def make_storeforward_client_frame(
@@ -1151,6 +1161,141 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
         wait_until(lambda: output_file.exists())
 
         self.assertEqual(output_file.read_text(encoding="utf-8").splitlines(), ['typed:{"type":"chat","text":"hi"}'])
+
+    def test_ip_tunnel_plugin_bridges_between_mesh_and_local_python_client(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+        tick_thread = threading.Thread(target=self.proxy.plugin_tick_loop, daemon=True)
+        tick_thread.start()
+
+        plugin_socket = pathlib.Path(self.temp_dir.name) / "plugins" / "IP_TUNNEL_APP" / "ip_tunnel.sock"
+        wait_until(plugin_socket.exists)
+
+        received_packets = []
+        client = setup_ip_tunnel_client(
+            runtime_dir=self.temp_dir.name,
+            client_name="test-client",
+            on_packet=received_packets.append,
+            heartbeat_interval=60.0,
+        )
+        try:
+            self.fake_serial.inject_read(make_fromradio_tunnel_frame(b"inbound-tunnel", from_node=321, to_node=654))
+            wait_until(lambda: received_packets and received_packets[-1]["payload"] == b"inbound-tunnel")
+
+            client.send(777, b"outbound-tunnel", want_response=True)
+            wait_until(
+                lambda: any(
+                    bytes(decode_toradio_frame(frame).packet.decoded.payload) == b"outbound-tunnel"
+                    for frame in non_probe_writes(self.fake_serial.writes)
+                )
+            )
+
+            forwarded = next(
+                decode_toradio_frame(frame)
+                for frame in non_probe_writes(self.fake_serial.writes)
+                if bytes(decode_toradio_frame(frame).packet.decoded.payload) == b"outbound-tunnel"
+            )
+            self.assertEqual(int(forwarded.packet.to), 777)
+            self.assertEqual(int(forwarded.packet.decoded.portnum), int(portnums_pb2.IP_TUNNEL_APP))
+            self.assertEqual(bytes(forwarded.packet.decoded.payload), b"outbound-tunnel")
+            self.assertTrue(bool(forwarded.packet.decoded.want_response))
+        finally:
+            client.close()
+            self.proxy.stop_event.set()
+            tick_thread.join(timeout=1.0)
+
+    def test_ip_tunnel_tick_emits_gateway_announcement_by_default(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+        self.proxy._local_node_num = 0x1234
+        self.proxy._local_short_name = "GW01"
+
+        self.proxy.plugins.tick(self.proxy.build_plugin_api())
+        self.assertEqual(len(non_probe_writes(self.fake_serial.writes)), 1)
+        announcement_write = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[0])
+        self.assertEqual(announcement_write.packet.decoded.portnum, portnums_pb2.IP_TUNNEL_APP)
+        frame = json.loads(bytes(announcement_write.packet.decoded.payload).decode("utf-8"))
+        self.assertEqual(frame["schema"], "meshtastic.gateway.control")
+        self.assertEqual(frame["version"], 1)
+        self.assertEqual(frame["kind"], "announce")
+        announcement = frame["payload"]
+        self.assertEqual(announcement["type"], "gateway_announce")
+
+    def test_ip_tunnel_tick_emits_gateway_announcement_when_enabled(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+        config_dir = self.proxy.plugin_state_dir / "IP_TUNNEL_APP"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.json").write_text(
+            json.dumps({"announce_enabled": True, "announce_interval_secs": 60, "announce_secondary": True}) + "\n",
+            encoding="utf-8",
+        )
+        self.proxy._local_node_num = 0x1234
+        self.proxy._local_short_name = "GW01"
+
+        self.proxy.plugins.tick(self.proxy.build_plugin_api())
+        self.assertEqual(len(non_probe_writes(self.fake_serial.writes)), 1)
+
+        announcement_write = decode_toradio_frame(non_probe_writes(self.fake_serial.writes)[0])
+        self.assertEqual(announcement_write.packet.to, 0)
+        self.assertEqual(announcement_write.packet.decoded.portnum, portnums_pb2.IP_TUNNEL_APP)
+        frame = json.loads(bytes(announcement_write.packet.decoded.payload).decode("utf-8"))
+        self.assertEqual(frame["schema"], "meshtastic.gateway.control")
+        self.assertEqual(frame["version"], 1)
+        self.assertEqual(frame["kind"], "announce")
+        announcement = frame["payload"]
+        self.assertEqual(announcement["type"], "gateway_announce")
+        self.assertEqual(announcement["gateway_service"], "ip_tunnel")
+        self.assertEqual(announcement["capabilities"], ["ip_tunnel"])
+        self.assertEqual(announcement["announce_interval_secs"], 60)
+        self.assertEqual(announcement["secondary"], True)
+        self.assertEqual(announcement["local_node_num"], 0x1234)
+        self.assertEqual(announcement["local_short_name"], "GW01")
+        self.assertTrue((config_dir / "announce.json").exists())
+
+        self.proxy.plugins.tick(self.proxy.build_plugin_api())
+        self.assertEqual(len(non_probe_writes(self.fake_serial.writes)), 1)
+
+    def test_ip_tunnel_plugin_persists_seen_gateway_announcements(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+        payload = json.dumps(
+            {
+                "schema": "meshtastic.gateway.control",
+                "version": 1,
+                "kind": "announce",
+                "payload": {
+                    "type": "gateway_announce",
+                    "gateway_service": "ip_tunnel",
+                    "capabilities": ["ip_tunnel"],
+                    "local_node_num": 0x1234,
+                    "local_short_name": "GW01",
+                },
+            }
+        ).encode("utf-8")
+
+        self.fake_serial.inject_read(make_fromradio_tunnel_frame(payload))
+        log_path = self.proxy.plugin_state_dir / "IP_TUNNEL_APP" / "announcements.jsonl"
+        wait_until(log_path.exists)
+        records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["announcement"]["type"], "gateway_announce")
+        self.assertEqual(records[0]["announcement"]["gateway_service"], "ip_tunnel")
+
+    def test_ip_tunnel_plugin_ignores_non_ip_non_control_payload(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+
+        self.fake_serial.inject_read(make_fromradio_tunnel_frame(b"\x01not-ip"))
+        time.sleep(0.1)
+
+        log_path = self.proxy.plugin_state_dir / "IP_TUNNEL_APP" / "announcements.jsonl"
+        self.assertFalse(log_path.exists())
+
+    def test_ip_tunnel_plugin_ignores_unversioned_control_json(self) -> None:
+        shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", self.plugins_dir / "IP_TUNNEL_APP.handler.py")
+        payload = json.dumps({"type": "gateway_announce", "gateway_service": "ip_tunnel"}).encode("utf-8")
+
+        self.fake_serial.inject_read(make_fromradio_tunnel_frame(payload))
+        time.sleep(0.1)
+
+        log_path = self.proxy.plugin_state_dir / "IP_TUNNEL_APP" / "announcements.jsonl"
+        self.assertFalse(log_path.exists())
 
     def test_private_app_falls_back_to_generic_handler_when_typed_handler_missing(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "private-app-generic.txt"

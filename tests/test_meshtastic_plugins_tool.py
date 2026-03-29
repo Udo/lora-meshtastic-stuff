@@ -20,6 +20,83 @@ from tools import meshtastic_plugins
 
 
 class MeshtasticPluginsToolTests(unittest.TestCase):
+    def test_ip_tunnel_status_defaults_to_framework_standard_announcements_enabled(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            base = pathlib.Path(temp_dir.name)
+            plugins_dir = base / "plugin-src"
+            runtime_dir = base / "runtime"
+            plugins_dir.mkdir()
+            shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", plugins_dir / "IP_TUNNEL_APP.handler.py")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = meshtastic_plugins.main(
+                    [
+                        "--plugins-dir",
+                        str(plugins_dir),
+                        "--runtime-dir",
+                        str(runtime_dir),
+                        "IP_TUNNEL_APP",
+                        "status",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("announce_enabled: True", output)
+            self.assertIn("announce_interval_secs: 300", output)
+            self.assertIn("announce_secondary: False", output)
+        finally:
+            temp_dir.cleanup()
+
+    def test_ip_tunnel_config_command_updates_announce_settings(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        try:
+            base = pathlib.Path(temp_dir.name)
+            plugins_dir = base / "plugin-src"
+            runtime_dir = base / "runtime"
+            plugins_dir.mkdir()
+            shutil.copy2(REPO_ROOT / "plugins" / "IP_TUNNEL_APP.handler.py", plugins_dir / "IP_TUNNEL_APP.handler.py")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = meshtastic_plugins.main(
+                    [
+                        "--plugins-dir",
+                        str(plugins_dir),
+                        "--runtime-dir",
+                        str(runtime_dir),
+                        "IP_TUNNEL_APP",
+                        "config",
+                        "--announce",
+                        "yes",
+                        "--announce-interval-secs",
+                        "120",
+                        "--announce-secondary",
+                        "yes",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("announce_enabled: True", output)
+            self.assertIn("announce_interval_secs: 120", output)
+            self.assertIn("announce_secondary: True", output)
+            config_path = runtime_dir / "plugins" / "IP_TUNNEL_APP" / "config.json"
+            self.assertTrue(config_path.exists())
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                config,
+                {
+                    "announce_enabled": True,
+                    "announce_interval_secs": 120,
+                    "announce_secondary": True,
+                },
+            )
+        finally:
+            temp_dir.cleanup()
+
     def test_store_forward_stats_command_reads_plugin_storage(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()
         try:

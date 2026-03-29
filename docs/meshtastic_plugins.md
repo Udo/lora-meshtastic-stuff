@@ -613,3 +613,92 @@ tools/meshtastic_plugins.py STORE_FORWARD_APP stats
 - a self-contained operator CLI
 
 That same pattern is enough for many host-side protocol extensions without needing firmware changes.
+
+## `IP_TUNNEL_APP` Bridge
+
+The repo also includes `plugins/IP_TUNNEL_APP.handler.py`, which handles the Meshtastic side of the `IP_TUNNEL_APP` protocol and bridges it to local processes over a Unix datagram socket.
+
+Runtime files:
+
+- control socket: `.runtime/meshtastic/plugins/IP_TUNNEL_APP/ip_tunnel.sock`
+- status file: `.runtime/meshtastic/plugins/IP_TUNNEL_APP/status.json`
+- announce config: `.runtime/meshtastic/plugins/IP_TUNNEL_APP/config.json`
+- announce state: `.runtime/meshtastic/plugins/IP_TUNNEL_APP/announce.json`
+
+Behavior:
+
+- inbound mesh `IP_TUNNEL_APP` payloads are forwarded to all registered local tunnel clients
+- local tunnel clients can send JSON datagrams to request mesh transmission on `IP_TUNNEL_APP`
+- registrations are refreshed by client heartbeats and expire automatically if the client stops talking to the plugin
+- `tick()` can emit a same-port JSON heartbeat of type `gateway_announce` so other mesh participants can discover this service
+
+The companion helper module is `tools/meshtastic_ip_tunnel.py`:
+
+```python
+from tools.meshtastic_ip_tunnel import setup_ip_tunnel_client
+
+def on_packet(packet):
+    print(packet["packet_from"], packet["payload"])
+
+client = setup_ip_tunnel_client(on_packet=on_packet)
+client.send(123456789, b"\x45...")
+```
+
+The helper waits for the plugin socket, registers a local Unix datagram client, decodes inbound payloads back to bytes, and provides a small `send()` wrapper so callers do not need to construct Meshtastic `ToRadio` frames directly.
+
+For Linux hosts, the same module also exposes `setup_linux_ip_tunnel(...)`, which layers a TUN interface on top of the helper:
+
+```python
+from tools.meshtastic_ip_tunnel import setup_linux_ip_tunnel
+
+bridge = setup_linux_ip_tunnel(local_node_num=0x1234, tun_name="mesh")
+```
+
+Current behavior:
+
+- Linux only
+- stdlib-only implementation using `/dev/net/tun`
+- default synthetic subnet prefix is `10.115`
+- destination node numbers are derived from the low 16 bits of the destination IPv4 address
+- a small blacklist filters known noisy UDP/TCP traffic before it hits LoRa
+
+## Gateway Announcements
+
+Upstream Meshtastic defines `IP_TUNNEL_APP` as raw IP payload handled by the Python side. There is no official Meshtastic heartbeat schema for that port in the upstream sources we checked, so this repo defines a framework-standard same-port gateway heartbeat and enables it by default for the built-in `IP_TUNNEL_APP` plugin.
+
+When enabled, `IP_TUNNEL_APP` uses a same-port service control plane by broadcasting a versioned JSON envelope like:
+
+```json
+{
+  "schema": "meshtastic.gateway.control",
+  "version": 1,
+  "kind": "announce",
+  "payload": {
+    "type": "gateway_announce",
+    "gateway_service": "ip_tunnel",
+    "capabilities": ["ip_tunnel"],
+    "local_node_num": 4660,
+    "local_short_name": "GW01",
+    "announce_interval_secs": 300,
+    "secondary": false,
+    "version": 1
+  }
+}
+```
+
+That envelope rides on `IP_TUNNEL_APP` itself. Raw IPv4/IPv6 payloads are forwarded as tunnel traffic; non-IP payloads are interpreted as service-control frames for this gateway service. This keeps the data plane on the standard Meshtastic tunnel port while making the service heartbeat part of this repo's gateway framework standard.
+
+Announcement behavior is configurable through the plugin CLI:
+
+```bash
+tools/meshtastic_plugins.py IP_TUNNEL_APP status
+tools/meshtastic_plugins.py IP_TUNNEL_APP config --announce yes --announce-interval-secs 300
+tools/meshtastic_plugins.py IP_TUNNEL_APP config --announce-secondary yes
+tools/meshtastic_plugins.py IP_TUNNEL_APP recent --limit 20
+```
+
+Seen announcements are stored under:
+
+```text
+.runtime/meshtastic/plugins/IP_TUNNEL_APP/announcements.jsonl
+```
