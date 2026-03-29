@@ -894,7 +894,7 @@ class MeshtasticProxy:
         if event.get("portnum_name") != "TEXT_MESSAGE_APP":
             return False
         packet_to = int(event.get("packet_to") or 0)
-        return packet_to != 0
+        return packet_to not in (0, 0xFFFFFFFF)
 
     def _channel_namespace(self, channel_name: str | None) -> str | None:
         if not channel_name:

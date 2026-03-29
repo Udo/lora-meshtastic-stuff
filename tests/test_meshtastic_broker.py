@@ -1595,6 +1595,25 @@ class MeshtasticProxyIntegrationTests(unittest.TestCase):
             ["generic:hello one", "word:hello two"],
         )
 
+    def test_broadcast_address_message_does_not_trigger_dm_plugins(self) -> None:
+        output_file = pathlib.Path(self.temp_dir.name) / "dm-broadcast-guard.txt"
+        dm_dir = self.plugins_dir / "DM"
+        dm_dir.mkdir()
+        (dm_dir / "handler.py").write_text(
+            "def handle_packet(event, api):\n"
+            f"    with open({str(output_file)!r}, 'a', encoding='utf-8') as handle:\n"
+            "        handle.write('dm-fired\\n')\n",
+            encoding="utf-8",
+        )
+
+        # to=0xFFFFFFFF is the Meshtastic broadcast address used by all public channel messages.
+        # DM plugins must never fire for these.
+        self.fake_serial.inject_read(
+            make_fromradio_direct_text_frame(b"hello everyone", from_node=42, to_node=0xFFFFFFFF)
+        )
+        time.sleep(0.15)
+        self.assertFalse(output_file.exists(), "DM plugin must not fire for broadcast-address messages")
+
     def test_direct_message_falls_back_when_specific_handler_is_deleted(self) -> None:
         output_file = pathlib.Path(self.temp_dir.name) / "dm-deleted.txt"
         dm_dir = self.plugins_dir / "DM"
