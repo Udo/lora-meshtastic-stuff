@@ -8,3 +8,12 @@ console/contact/client.db
 console/contact/client.log
 console/contact/config.json
 console/contact/node-configs/
+rtl2838/build/
+rtl2838/captures/
+rtl2838/local/
+rtl2838/logs/
+rtl2838/reports/
+rtl2838/vendor/
+*.cu8
+*.log
+*.db

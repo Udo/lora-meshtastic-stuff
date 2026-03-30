@@ -202,6 +202,71 @@ The repo-local pretty status tool lives at [tools/meshtastic_status.py](tools/me
 
 For a primer on the main Meshtastic application protocols used throughout this repo, see [docs/meshtastic_protocols.md](docs/meshtastic_protocols.md).
 
+## RTL2838 SDR
+
+This repo also has a local setup wrapper for an RTL2832/RTL2838 USB SDR dongle under [setup/rtl2838.sh](setup/rtl2838.sh).
+
+Common commands:
+
+```bash
+./setup/rtl2838.sh info
+./setup/rtl2838.sh doctor
+./setup/rtl2838.sh bootstrap
+./setup/rtl2838.sh probe-kernel
+./setup/rtl2838.sh rtl-test
+./setup/rtl2838.sh capture-v4l2 868000000 10
+./setup/rtl2838.sh analyze rtl2838/captures/some-file.cu8 868000000
+./setup/rtl2838.sh eu868-demo 10
+./setup/rtl2838.sh eu868-live
+./setup/rtl2838.sh eu868-live low
+./setup/rtl2838.sh preset-live max-span
+./setup/rtl2838.sh preset-live am-broadcast
+./setup/rtl2838.sh preset-live ham-2m
+./setup/rtl2838.sh preset-live ism433
+./setup/rtl2838.sh preset-live adsb1090
+./setup/rtl2838.sh preset-live aprs-monitor
+./setup/rtl2838.sh preset-live ais-monitor
+./setup/rtl2838.sh preset-live acars-monitor
+./setup/rtl2838.sh preset-live weather-alert-monitor
+./setup/rtl2838.sh preset-live rtl433-868
+./setup/rtl2838.sh preset-live broadband-868
+./setup/rtl2838.sh adsb-monitor
+./setup/rtl2838.sh adsb-monitor --source libusb
+./setup/rtl2838.sh aprs-monitor
+./setup/rtl2838.sh ais-monitor
+./setup/rtl2838.sh weather-alert-monitor
+./setup/rtl2838.sh rtl433-monitor
+./setup/rtl2838.sh rtl433-monitor 433
+./setup/rtl2838.sh rtl433-monitor 915
+./setup/rtl2838.sh rtl433-monitor --log-file rtl2838/logs/rtl433.jsonl
+./setup/rtl2838.sh acars-monitor
+./setup/rtl2838.sh live-waterfall
+./setup/rtl2838.sh eu868-live wide 3200000 ascii
+RTL2838_NORM_MODE=row ./setup/rtl2838.sh eu868-live
+RTL2838_AVG_FRAMES=2 RTL2838_NORM_START_HEADROOM_DB=10 ./setup/rtl2838.sh eu868-live
+python3 tools/rtl2838_live_waterfall.py --profile pmr446
+python3 tools/rtl2838_live_waterfall.py --profile max-span --center 433920000
+python3 tools/rtl2838_live_waterfall.py --profile eu868-wide --fps 12 --markers 867.950,test=868.650
+./setup/rtl2838.sh live-waterfall 868300000 none 2048000
+./setup/rtl2838.sh rtl-sdr 868000000 10
+./setup/rtl2838.sh fm 101900000 20
+```
+
+`./setup/rtl2838.sh bootstrap` vendors and builds `rtl-sdr`, `rtl_433`, and `acarsdec` under `rtl2838/local/`, and auto-installs the apt-managed host prerequisites needed by the shipped SDR tools on Ubuntu/Debian.
+
+The repo also now includes live decoder/logging monitors for public RF traffic:
+
+- `adsb-monitor` for aircraft at `1090 MHz`
+- `rtl433-monitor` for common ISM sensors, with `868` as the default EU preset
+- `aprs-monitor` for amateur APRS on `144.800 MHz`
+- `ais-monitor` for marine AIS on `161.975` / `162.025 MHz`
+- `weather-alert-monitor` for SAME/EAS headers around `162.550 MHz`
+- `acars-monitor` for ACARS aircraft text channels
+
+Each monitor supports `--log-file <path>` for JSONL event logging while keeping the live TUI active. `bootstrap` now preinstalls the apt-managed runtime dependencies and builds the repo-local `acarsdec` binary too, so the shipped SDR tools do not need deferred package discovery later.
+
+See [docs/rtl2838.md](docs/rtl2838.md) for the repo-local SDR workflow, vendoring layout, and capture notes.
+
 After `./setup/meshtastic-python.sh bootstrap`, direct invocation works too:
 
 ```bash
