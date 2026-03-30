@@ -20,6 +20,7 @@ from _rf_monitor_common import (
     monitor_status_line,
     repo_local_binary,
 )
+from _rf_profiles import RTL433_PRESETS
 
 
 @dataclass
@@ -33,13 +34,6 @@ class DeviceState:
     last_channel: str | None = None
     preview: str = ""
     fields: dict[str, str] = field(default_factory=dict)
-
-
-RTL433_PRESETS = {
-    "433": {"frequency": 433.92, "sample_rate": 250000, "description": "Common 433 MHz ISM sensors"},
-    "868": {"frequency": 868.30, "sample_rate": 250000, "description": "Common EU 868 MHz ISM sensors"},
-    "915": {"frequency": 915.00, "sample_rate": 250000, "description": "Common 915 MHz ISM sensors"},
-}
 
 
 def default_rtl433_binary() -> str:

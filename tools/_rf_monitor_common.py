@@ -12,16 +12,43 @@ from pathlib import Path
 from typing import Any
 
 
+def repo_root(script_path: str) -> Path:
+    return Path(script_path).resolve().parents[1]
+
+
 def repo_local_binary(script_path: str, name: str, fallback: str) -> str:
-    repo_root = Path(script_path).resolve().parents[1]
-    local_binary = repo_root / "rtl2838" / "local" / "bin" / name
+    local_binary = repo_root(script_path) / "rtl2838" / "local" / "bin" / name
     if local_binary.exists():
         return str(local_binary)
     return fallback
 
 
 def setup_script_path(script_path: str) -> Path:
-    return Path(script_path).resolve().parents[1] / "setup" / "rtl2838.sh"
+    return repo_root(script_path) / "setup" / "rtl2838.sh"
+
+
+def repo_local_runtime_env(script_path: str, *, binary_path: str | None = None) -> dict[str, str]:
+    root = repo_root(script_path)
+    local_root = root / "rtl2838" / "local"
+    env = dict(os.environ)
+
+    lib_paths = [str(local_root / "lib"), str(local_root / "lib64")]
+    if binary_path and "/" in binary_path:
+        binary_lib = str(Path(binary_path).resolve().parents[1] / "lib")
+        lib_paths.insert(0, binary_lib)
+
+    existing_ld = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = ":".join(path for path in [*lib_paths, existing_ld] if path)
+
+    py_paths = [
+        str(local_root / "lib" / "python3" / "dist-packages"),
+        str(local_root / "lib" / "python3" / "site-packages"),
+        str(local_root / "lib64" / "python3" / "dist-packages"),
+        str(local_root / "lib64" / "python3" / "site-packages"),
+    ]
+    existing_py = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = ":".join(path for path in [*py_paths, existing_py] if path)
+    return env
 
 
 def rtl2838_usb_present() -> bool:

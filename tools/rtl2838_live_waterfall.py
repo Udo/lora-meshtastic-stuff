@@ -8,188 +8,10 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
 
 import numpy as np
 from _rf_monitor_common import NonBlockingProcess, configure_curses, draw_text, ensure_dongle_mode
-
-
-@dataclass(frozen=True)
-class Marker:
-    label: str
-    freq_hz: int
-
-
-@dataclass(frozen=True)
-class Preset:
-    center_hz: int
-    span_hz: int
-    markers: str
-    description: str
-
-
-EU868_LOW_MARKERS = [
-    Marker("867.1", 867_100_000),
-    Marker("867.3", 867_300_000),
-    Marker("867.5", 867_500_000),
-    Marker("867.7", 867_700_000),
-    Marker("867.9", 867_900_000),
-    Marker("868.1", 868_100_000),
-    Marker("868.3", 868_300_000),
-    Marker("868.5", 868_500_000),
-]
-
-EU868_HIGH_MARKERS = [
-    Marker("869.525", 869_525_000),
-    Marker("869.850", 869_850_000),
-]
-
-EU868_WIDE_MARKERS = EU868_LOW_MARKERS + EU868_HIGH_MARKERS
-
-ISM433_MARKERS = [
-    Marker("433.050", 433_050_000),
-    Marker("433.920", 433_920_000),
-    Marker("434.790", 434_790_000),
-]
-
-PMR446_MARKERS = [
-    Marker("446.006", 446_006_250),
-    Marker("446.094", 446_093_750),
-    Marker("446.194", 446_193_750),
-]
-
-AIRBAND_MARKERS = [
-    Marker("131.525", 131_525_000),
-    Marker("131.725", 131_725_000),
-    Marker("131.825", 131_825_000),
-    Marker("121.500", 121_500_000),
-]
-
-ADSB1090_MARKERS = [
-    Marker("1090.000", 1_090_000_000),
-]
-
-APRS_MARKERS = [
-    Marker("144.390", 144_390_000),
-    Marker("144.800", 144_800_000),
-    Marker("145.825", 145_825_000),
-]
-
-AIS_MARKERS = [
-    Marker("156.800", 156_800_000),
-    Marker("161.975", 161_975_000),
-    Marker("162.025", 162_025_000),
-]
-
-ACARS_MARKERS = [
-    Marker("131.525", 131_525_000),
-    Marker("131.550", 131_550_000),
-    Marker("131.725", 131_725_000),
-    Marker("131.825", 131_825_000),
-    Marker("131.850", 131_850_000),
-]
-
-RTL433_433_MARKERS = ISM433_MARKERS
-
-RTL433_868_MARKERS = [
-    Marker("868.100", 868_100_000),
-    Marker("868.300", 868_300_000),
-    Marker("868.500", 868_500_000),
-    Marker("868.950", 868_950_000),
-    Marker("869.525", 869_525_000),
-]
-
-RTL433_915_MARKERS = [
-    Marker("914.900", 914_900_000),
-    Marker("915.000", 915_000_000),
-    Marker("915.200", 915_200_000),
-]
-
-AM_BROADCAST_MARKERS = [
-    Marker("540", 540_000),
-    Marker("720", 720_000),
-    Marker("900", 900_000),
-    Marker("1080", 1_080_000),
-    Marker("1260", 1_260_000),
-    Marker("1440", 1_440_000),
-    Marker("1600", 1_600_000),
-]
-
-SHORTWAVE_MARKERS = [
-    Marker("5.0", 5_000_000),
-    Marker("7.1", 7_100_000),
-    Marker("9.5", 9_500_000),
-    Marker("11.7", 11_700_000),
-    Marker("13.8", 13_800_000),
-]
-
-NOAA_WEATHER_MARKERS = [
-    Marker("162.400", 162_400_000),
-    Marker("162.425", 162_425_000),
-    Marker("162.450", 162_450_000),
-    Marker("162.475", 162_475_000),
-    Marker("162.500", 162_500_000),
-    Marker("162.525", 162_525_000),
-    Marker("162.550", 162_550_000),
-]
-
-MARINE_VHF_MARKERS = [
-    Marker("156.800", 156_800_000),
-    Marker("156.300", 156_300_000),
-    Marker("157.100", 157_100_000),
-]
-
-CB27_MARKERS = [
-    Marker("26.965", 26_965_000),
-    Marker("27.185", 27_185_000),
-    Marker("27.405", 27_405_000),
-]
-
-HAM_10M_MARKERS = [
-    Marker("28.400", 28_400_000),
-    Marker("29.000", 29_000_000),
-    Marker("29.600", 29_600_000),
-]
-
-HAM_6M_MARKERS = [
-    Marker("50.125", 50_125_000),
-    Marker("52.525", 52_525_000),
-]
-
-HAM_2M_MARKERS = [
-    Marker("144.390", 144_390_000),
-    Marker("144.800", 144_800_000),
-    Marker("145.500", 145_500_000),
-    Marker("146.520", 146_520_000),
-]
-
-MURS_MARKERS = [
-    Marker("151.820", 151_820_000),
-    Marker("151.880", 151_880_000),
-    Marker("151.940", 151_940_000),
-    Marker("154.570", 154_570_000),
-    Marker("154.600", 154_600_000),
-]
-
-HAM_70CM_MARKERS = [
-    Marker("433.000", 433_000_000),
-    Marker("433.920", 433_920_000),
-    Marker("446.000", 446_000_000),
-]
-
-FRS_GMRS_MARKERS = [
-    Marker("462.5625", 462_562_500),
-    Marker("462.6750", 462_675_000),
-    Marker("462.7250", 462_725_000),
-    Marker("467.5625", 467_562_500),
-    Marker("467.7125", 467_712_500),
-]
-
-ISM915_MARKERS = [
-    Marker("902.300", 902_300_000),
-    Marker("915.000", 915_000_000),
-    Marker("927.500", 927_500_000),
-]
+from _rf_profiles import MARKER_SETS, WATERFALL_PROFILES, Marker
 
 CHARSET_PRESETS = {
     "blocks": " ▁▂▃▄▅▆▇█",
@@ -198,10 +20,9 @@ CHARSET_PRESETS = {
     "dense": " .`^,:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
 }
 DEFAULT_DEVICE = os.environ.get("RTL2838_DEVICE", "/dev/swradio0")
-DEFAULT_PRESET = os.environ.get("RTL2838_PROFILE", os.environ.get("RTL2838_PRESET", "eu868-wide"))
+DEFAULT_PROFILE_NAME = os.environ.get("RTL2838_PROFILE", os.environ.get("RTL2838_PRESET", "eu868-wide"))
 DEFAULT_CENTER_FREQ_HZ = int(os.environ.get("RTL2838_CENTER_FREQ_HZ", "868475000"))
 DEFAULT_SAMPLE_RATE = int(os.environ.get("RTL2838_SAMPLE_RATE", "3200000"))
-DEFAULT_PROFILE = os.environ.get("RTL2838_PROFILE", "eu868-wide")
 DEFAULT_CHARSET = os.environ.get("RTL2838_CHARSET", "blocks")
 DEFAULT_FPS = float(os.environ.get("RTL2838_FPS", "12.0"))
 DEFAULT_NORM_MODE = os.environ.get("RTL2838_NORM_MODE", "slow")
@@ -209,83 +30,6 @@ DEFAULT_NORM_ALPHA = float(os.environ.get("RTL2838_NORM_ALPHA", "0.08"))
 DEFAULT_NORM_MIN_RANGE_DB = float(os.environ.get("RTL2838_NORM_MIN_RANGE_DB", "18.0"))
 DEFAULT_NORM_START_HEADROOM_DB = float(os.environ.get("RTL2838_NORM_START_HEADROOM_DB", "8.0"))
 DEFAULT_AVG_FRAMES = int(os.environ.get("RTL2838_AVG_FRAMES", "3"))
-
-MARKER_SETS = {
-    "none": [],
-    "max-span": [],
-    "eu868-low": EU868_LOW_MARKERS,
-    "eu868-high": EU868_HIGH_MARKERS,
-    "eu868-wide": EU868_WIDE_MARKERS,
-    "am-broadcast": AM_BROADCAST_MARKERS,
-    "shortwave": SHORTWAVE_MARKERS,
-    "weather": NOAA_WEATHER_MARKERS,
-    "marine-vhf": MARINE_VHF_MARKERS,
-    "cb-27mhz": CB27_MARKERS,
-    "ham-10m": HAM_10M_MARKERS,
-    "ham-6m": HAM_6M_MARKERS,
-    "ham-2m": HAM_2M_MARKERS,
-    "murs": MURS_MARKERS,
-    "ism433": ISM433_MARKERS,
-    "pmr446": PMR446_MARKERS,
-    "ham-70cm": HAM_70CM_MARKERS,
-    "frs-gmrs": FRS_GMRS_MARKERS,
-    "ism915": ISM915_MARKERS,
-    "airband": AIRBAND_MARKERS,
-    "adsb1090": ADSB1090_MARKERS,
-    "adsb-monitor": ADSB1090_MARKERS,
-    "aprs": APRS_MARKERS,
-    "aprs-monitor": APRS_MARKERS,
-    "ais": AIS_MARKERS,
-    "ais-monitor": AIS_MARKERS,
-    "acars": ACARS_MARKERS,
-    "acars-monitor": ACARS_MARKERS,
-    "weather-alert": NOAA_WEATHER_MARKERS,
-    "weather-alert-monitor": NOAA_WEATHER_MARKERS,
-    "rtl433-433": RTL433_433_MARKERS,
-    "rtl433-868": RTL433_868_MARKERS,
-    "rtl433-915": RTL433_915_MARKERS,
-    "fm-broadcast": [],
-    "broadband-868": [],
-}
-
-PRESETS = {
-    "max-span": Preset(868_475_000, 3_200_000, "none", "Maximum instantaneous span supported by this workflow"),
-    "eu868-wide": Preset(868_475_000, 3_200_000, "eu868-wide", "Wide EU868 overview"),
-    "eu868-low": Preset(867_900_000, 2_048_000, "eu868-low", "Lower EU868 LoRa channels"),
-    "eu868-high": Preset(869_525_000, 2_048_000, "eu868-high", "Upper EU868 / Meshtastic-ish area"),
-    "am-broadcast": Preset(1_050_000, 1_600_000, "am-broadcast", "AM broadcast band"),
-    "shortwave-49m": Preset(6_100_000, 2_400_000, "shortwave", "Shortwave 49m-ish listening window"),
-    "shortwave-31m": Preset(9_650_000, 2_400_000, "shortwave", "Shortwave 31m-ish listening window"),
-    "weather": Preset(162_475_000, 400_000, "weather", "NOAA weather radio"),
-    "marine-vhf": Preset(156_800_000, 2_400_000, "marine-vhf", "Marine VHF"),
-    "cb-27mhz": Preset(27_185_000, 2_400_000, "cb-27mhz", "11m CB radio"),
-    "ham-10m": Preset(28_850_000, 3_200_000, "ham-10m", "10 meter amateur band"),
-    "ham-6m": Preset(51_000_000, 2_400_000, "ham-6m", "6 meter amateur band"),
-    "ham-2m": Preset(146_000_000, 4_000_000, "ham-2m", "2 meter amateur band"),
-    "murs": Preset(152_500_000, 4_000_000, "murs", "US MURS channels"),
-    "ism433": Preset(433_920_000, 2_400_000, "ism433", "433 MHz ISM devices"),
-    "pmr446": Preset(446_100_000, 2_400_000, "pmr446", "PMR446 handheld channels"),
-    "ham-70cm": Preset(434_500_000, 4_000_000, "ham-70cm", "70cm amateur / LPD-ish region"),
-    "frs-gmrs": Preset(465_137_500, 6_000_000, "frs-gmrs", "FRS / GMRS handheld channels"),
-    "ism915": Preset(915_000_000, 12_000_000, "ism915", "902-928 MHz ISM band slice"),
-    "airband": Preset(121_500_000, 2_400_000, "airband", "Airband around 121.5 MHz"),
-    "adsb1090": Preset(1_090_000_000, 2_400_000, "adsb1090", "ADS-B / Mode S at 1090 MHz"),
-    "adsb-monitor": Preset(1_090_000_000, 2_400_000, "adsb-monitor", "ADS-B / Mode S monitor band"),
-    "aprs": Preset(144_800_000, 2_400_000, "aprs", "APRS around 144.800 MHz"),
-    "aprs-monitor": Preset(144_800_000, 2_400_000, "aprs-monitor", "APRS monitor band"),
-    "ais": Preset(162_000_000, 1_200_000, "ais", "AIS marine channels"),
-    "ais-monitor": Preset(162_000_000, 1_200_000, "ais-monitor", "AIS marine monitor band"),
-    "acars": Preset(131_700_000, 2_400_000, "acars", "ACARS VHF channels"),
-    "acars-monitor": Preset(131_700_000, 2_400_000, "acars-monitor", "ACARS monitor band"),
-    "weather-alert": Preset(162_475_000, 400_000, "weather-alert", "Weather alert channels"),
-    "weather-alert-monitor": Preset(162_475_000, 400_000, "weather-alert-monitor", "Weather alert monitor band"),
-    "rtl433-433": Preset(433_920_000, 2_400_000, "rtl433-433", "rtl_433 433 MHz sensor band"),
-    "rtl433-868": Preset(868_300_000, 2_048_000, "rtl433-868", "rtl_433 868 MHz sensor band"),
-    "rtl433-915": Preset(915_000_000, 2_400_000, "rtl433-915", "rtl_433 915 MHz sensor band"),
-    "fm-broadcast": Preset(100_500_000, 3_200_000, "none", "Wide FM broadcast slice"),
-    "broadband-868": Preset(868_475_000, 3_200_000, "none", "Max-span EU868 broadband view"),
-}
-
 
 MARKER_SPEC_RE = re.compile(r"^\s*(?:(?P<label>[^=]+)=)?(?P<freq>.+?)\s*$")
 
@@ -342,9 +86,9 @@ def parse_args() -> argparse.Namespace:
         "--profile",
         "--preset",
         dest="profile_name",
-        choices=tuple(PRESETS.keys()),
-        default=DEFAULT_PRESET,
-        help=f"Named band profile for center/span/default markers (default: {DEFAULT_PRESET})",
+        choices=tuple(WATERFALL_PROFILES.keys()),
+        default=DEFAULT_PROFILE_NAME,
+        help=f"Named band profile for center/span/default markers (default: {DEFAULT_PROFILE_NAME})",
     )
     parser.add_argument(
         "--center",
@@ -407,12 +151,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain-text", default="kernel-v4l2")
     parser.add_argument("--bandwidth", type=int, default=0)
     args = parser.parse_args()
-    preset = PRESETS[args.profile_name]
+    profile = WATERFALL_PROFILES[args.profile_name]
     if args.center_freq_hz is None:
-        args.center_freq_hz = preset.center_hz
+        args.center_freq_hz = profile.center_hz
     if args.sample_rate is None:
-        args.sample_rate = preset.span_hz
-    args.base_markers = preset.markers
+        args.sample_rate = profile.span_hz
+    args.base_markers = profile.marker_set
     args.extra_markers = parse_marker_list(args.markers)
     return args
 

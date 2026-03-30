@@ -10,6 +10,14 @@ RTL433_SRC_DIR="${VENDOR_DIR}/rtl_433"
 RTL433_BUILD_DIR="${RTL_ROOT}/build/rtl_433"
 ACARSDEC_SRC_DIR="${VENDOR_DIR}/acarsdec"
 ACARSDEC_BUILD_DIR="${RTL_ROOT}/build/acarsdec"
+REDSEA_SRC_DIR="${VENDOR_DIR}/redsea"
+REDSEA_BUILD_DIR="${RTL_ROOT}/build/redsea"
+VDLM2DEC_SRC_DIR="${VENDOR_DIR}/vdlm2dec"
+VDLM2DEC_BUILD_DIR="${RTL_ROOT}/build/vdlm2dec"
+APTDEC_SRC_DIR="${VENDOR_DIR}/aptdec"
+APTDEC_BUILD_DIR="${RTL_ROOT}/build/aptdec"
+GR_LORA_SRC_DIR="${VENDOR_DIR}/gr-lora"
+GR_LORA_BUILD_DIR="${RTL_ROOT}/build/gr-lora"
 LOCAL_DIR="${RTL_ROOT}/local"
 BIN_DIR="${LOCAL_DIR}/bin"
 LIB_DIR="${LOCAL_DIR}/lib"
@@ -24,6 +32,14 @@ DEFAULT_RTL433_VENDOR_REMOTE="${RTL2838_RTL433_VENDOR_REMOTE:-https://github.com
 DEFAULT_RTL433_VENDOR_REF="${RTL2838_RTL433_VENDOR_REF:-25.02}"
 DEFAULT_ACARSDEC_VENDOR_REMOTE="${RTL2838_ACARSDEC_VENDOR_REMOTE:-https://github.com/TLeconte/acarsdec.git}"
 DEFAULT_ACARSDEC_VENDOR_REF="${RTL2838_ACARSDEC_VENDOR_REF:-acarsdec-3.7}"
+DEFAULT_REDSEA_VENDOR_REMOTE="${RTL2838_REDSEA_VENDOR_REMOTE:-https://github.com/windytan/redsea.git}"
+DEFAULT_REDSEA_VENDOR_REF="${RTL2838_REDSEA_VENDOR_REF:-master}"
+DEFAULT_VDLM2DEC_VENDOR_REMOTE="${RTL2838_VDLM2DEC_VENDOR_REMOTE:-https://github.com/TLeconte/vdlm2dec.git}"
+DEFAULT_VDLM2DEC_VENDOR_REF="${RTL2838_VDLM2DEC_VENDOR_REF:-master}"
+DEFAULT_APTDEC_VENDOR_REMOTE="${RTL2838_APTDEC_VENDOR_REMOTE:-https://github.com/Xerbo/aptdec.git}"
+DEFAULT_APTDEC_VENDOR_REF="${RTL2838_APTDEC_VENDOR_REF:-master}"
+DEFAULT_GR_LORA_VENDOR_REMOTE="${RTL2838_GR_LORA_VENDOR_REMOTE:-https://github.com/rpp0/gr-lora.git}"
+DEFAULT_GR_LORA_VENDOR_REF="${RTL2838_GR_LORA_VENDOR_REF:-master}"
 DEFAULT_SAMPLE_RATE="${RTL2838_SAMPLE_RATE:-3200000}"
 DEFAULT_BANDWIDTH="${RTL2838_BANDWIDTH:-0}"
 DEFAULT_GAIN="${RTL2838_GAIN:-0}"
@@ -37,6 +53,11 @@ APRS_MONITOR_TOOL="${ROOT_DIR}/tools/rf_aprs_monitor.py"
 ACARS_MONITOR_TOOL="${ROOT_DIR}/tools/rf_acars_monitor.py"
 AIS_MONITOR_TOOL="${ROOT_DIR}/tools/rf_ais_monitor.py"
 WEATHER_ALERT_MONITOR_TOOL="${ROOT_DIR}/tools/rf_weather_alert_monitor.py"
+RDS_MONITOR_TOOL="${ROOT_DIR}/tools/rf_rds_monitor.py"
+VDL2_MONITOR_TOOL="${ROOT_DIR}/tools/rf_vdl2_monitor.py"
+PAGER_MONITOR_TOOL="${ROOT_DIR}/tools/rf_pager_monitor.py"
+NOAA_APT_CAPTURE_TOOL="${ROOT_DIR}/tools/rf_noaa_apt_capture.py"
+LORA_MONITOR_TOOL="${ROOT_DIR}/tools/rf_lora_monitor.py"
 RF_COMMON_TOOL="${ROOT_DIR}/tools/_rf_monitor_common.py"
 
 if [[ -t 1 ]]; then
@@ -69,6 +90,7 @@ Commands:
       Vendor a pinned rtl-sdr source tree under rtl2838/vendor/rtl-sdr,
       vendor a pinned rtl_433 source tree under rtl2838/vendor/rtl_433,
       vendor a pinned acarsdec source tree under rtl2838/vendor/acarsdec,
+      vendor pinned redsea, vdlm2dec, aptdec, and gr-lora source trees,
       install all host prerequisites needed by the shipped tools, build them
       locally, and install the tools under rtl2838/local/bin.
 
@@ -79,7 +101,8 @@ Commands:
       Switch the dongle into kernel/V4L2 SDR mode, prompting for sudo if needed.
 
   use-libusb
-      Switch the dongle into libusb mode for rtl_test/rtl_sdr/rtl_fm/rtl_adsb,
+      Switch the dongle into libusb mode for rtl_test/rtl_sdr/rtl_fm/readsb
+      and the other direct SDR decoder tools,
       prompting for sudo if needed.
 
   release-libusb
@@ -107,12 +130,13 @@ Commands:
       Start a realtime console waterfall using a named preset such as
       max-span, eu868-wide, am-broadcast, shortwave-49m, weather, marine-vhf,
       cb-27mhz, ham-2m, ism433, pmr446, frs-gmrs, airband, adsb1090,
-      adsb-monitor, aprs-monitor, ais-monitor, acars-monitor,
+      adsb-monitor, aprs-monitor, ais-monitor, acars-monitor, rds-monitor,
+      vdl2-monitor, pager-monitor, noaa-apt-monitor, lora-monitor,
       weather-alert-monitor, rtl433-433, rtl433-868, rtl433-915,
       fm-broadcast, or broadband-868.
 
   adsb-monitor [args...]
-      Run a live ADS-B / Mode S monitor at 1090 MHz using the local rtl_adsb tool.
+      Run a live ADS-B / Mode S monitor at 1090 MHz using readsb.
       Aliases: rf_adsb_monitor, rf-adsb-monitor
 
   rtl433-monitor [preset] [args...]
@@ -134,6 +158,26 @@ Commands:
   weather-alert-monitor [args...]
       Run a live SAME/EAS weather alert monitor using rtl_fm and multimon-ng.
       Aliases: rf_weather_alert_monitor, rf-weather-alert-monitor
+
+  rds-monitor [args...]
+      Run a live FM RDS monitor using rtl_fm and redsea.
+      Aliases: rf_rds_monitor, rf-rds-monitor
+
+  vdl2-monitor [args...]
+      Run a live VDL2 aviation monitor using vdlm2dec JSON output.
+      Aliases: rf_vdl2_monitor, rf-vdl2-monitor
+
+  pager-monitor [args...]
+      Run a live pager monitor using rtl_fm and multimon-ng POCSAG decoders.
+      Aliases: rf_pager_monitor, rf-pager-monitor
+
+  noaa-apt-capture [args...]
+      Capture a NOAA APT weather satellite pass to WAV and decode it into PNG.
+      Alias: rf_noaa_apt_capture
+
+  lora-monitor [args...]
+      Capture a LoRa channel and decode annotated raw hex dumps with gr-lora.
+      Aliases: rf_lora_monitor, rf-lora-monitor
 
   rtl-test [args...]
       Run the locally built rtl_test binary.
@@ -313,6 +357,15 @@ run_python_tool() {
   python3 "${tool}" "$@"
 }
 
+is_help_request() {
+  case "${1:-}" in
+    -h|--help)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 rf_common_query() {
   run_python_tool "${RF_COMMON_TOOL}" "$@"
 }
@@ -481,6 +534,66 @@ vendor_acarsdec() {
   git -C "${ACARSDEC_SRC_DIR}" checkout --force FETCH_HEAD
 }
 
+vendor_redsea() {
+  require_command git
+  ensure_layout
+
+  if [[ ! -d "${REDSEA_SRC_DIR}/.git" ]]; then
+    print_info "Cloning redsea into ${REDSEA_SRC_DIR}"
+    git clone --depth 1 --branch "${DEFAULT_REDSEA_VENDOR_REF}" "${DEFAULT_REDSEA_VENDOR_REMOTE}" "${REDSEA_SRC_DIR}"
+    return
+  fi
+
+  print_info "Refreshing redsea checkout in ${REDSEA_SRC_DIR}"
+  git -C "${REDSEA_SRC_DIR}" fetch --depth 1 origin "${DEFAULT_REDSEA_VENDOR_REF}"
+  git -C "${REDSEA_SRC_DIR}" checkout --force FETCH_HEAD
+}
+
+vendor_vdlm2dec() {
+  require_command git
+  ensure_layout
+
+  if [[ ! -d "${VDLM2DEC_SRC_DIR}/.git" ]]; then
+    print_info "Cloning vdlm2dec into ${VDLM2DEC_SRC_DIR}"
+    git clone --depth 1 --branch "${DEFAULT_VDLM2DEC_VENDOR_REF}" "${DEFAULT_VDLM2DEC_VENDOR_REMOTE}" "${VDLM2DEC_SRC_DIR}"
+    return
+  fi
+
+  print_info "Refreshing vdlm2dec checkout in ${VDLM2DEC_SRC_DIR}"
+  git -C "${VDLM2DEC_SRC_DIR}" fetch --depth 1 origin "${DEFAULT_VDLM2DEC_VENDOR_REF}"
+  git -C "${VDLM2DEC_SRC_DIR}" checkout --force FETCH_HEAD
+}
+
+vendor_aptdec() {
+  require_command git
+  ensure_layout
+
+  if [[ ! -d "${APTDEC_SRC_DIR}/.git" ]]; then
+    print_info "Cloning aptdec into ${APTDEC_SRC_DIR}"
+    git clone --depth 1 --branch "${DEFAULT_APTDEC_VENDOR_REF}" "${DEFAULT_APTDEC_VENDOR_REMOTE}" "${APTDEC_SRC_DIR}"
+    return
+  fi
+
+  print_info "Refreshing aptdec checkout in ${APTDEC_SRC_DIR}"
+  git -C "${APTDEC_SRC_DIR}" fetch --depth 1 origin "${DEFAULT_APTDEC_VENDOR_REF}"
+  git -C "${APTDEC_SRC_DIR}" checkout --force FETCH_HEAD
+}
+
+vendor_gr_lora() {
+  require_command git
+  ensure_layout
+
+  if [[ ! -d "${GR_LORA_SRC_DIR}/.git" ]]; then
+    print_info "Cloning gr-lora into ${GR_LORA_SRC_DIR}"
+    git clone --depth 1 --branch "${DEFAULT_GR_LORA_VENDOR_REF}" "${DEFAULT_GR_LORA_VENDOR_REMOTE}" "${GR_LORA_SRC_DIR}"
+    return
+  fi
+
+  print_info "Refreshing gr-lora checkout in ${GR_LORA_SRC_DIR}"
+  git -C "${GR_LORA_SRC_DIR}" fetch --depth 1 origin "${DEFAULT_GR_LORA_VENDOR_REF}"
+  git -C "${GR_LORA_SRC_DIR}" checkout --force FETCH_HEAD
+}
+
 build_rtl_sdr() {
   require_command cmake
   require_command make
@@ -560,8 +673,97 @@ build_acarsdec() {
   cmake --install "${ACARSDEC_BUILD_DIR}"
 }
 
+build_redsea() {
+  require_command meson
+  require_command ninja
+  ensure_layout
+
+  print_info "Configuring redsea local build"
+  if [[ -f "${REDSEA_BUILD_DIR}/build.ninja" ]]; then
+    meson setup "${REDSEA_BUILD_DIR}" "${REDSEA_SRC_DIR}" --prefix "${LOCAL_DIR}" --buildtype release --libdir lib --reconfigure
+  else
+    meson setup "${REDSEA_BUILD_DIR}" "${REDSEA_SRC_DIR}" --prefix "${LOCAL_DIR}" --buildtype release --libdir lib
+  fi
+
+  print_info "Building redsea"
+  meson compile -C "${REDSEA_BUILD_DIR}"
+
+  print_info "Installing redsea into ${LOCAL_DIR}"
+  meson install -C "${REDSEA_BUILD_DIR}"
+}
+
+build_vdlm2dec() {
+  require_command cmake
+  ensure_layout
+
+  if [[ ! -x "${BIN_DIR}/rtl_fm" ]]; then
+    die "Missing repo-local rtl-sdr tools. Run ./setup/rtl2838.sh bootstrap or build rtl-sdr first."
+  fi
+
+  print_info "Configuring vdlm2dec local build"
+  cmake -S "${VDLM2DEC_SRC_DIR}" -B "${VDLM2DEC_BUILD_DIR}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${LOCAL_DIR}" \
+    -DCMAKE_PREFIX_PATH="${LOCAL_DIR}" \
+    -DCMAKE_INCLUDE_PATH="${LOCAL_DIR}/include" \
+    -DCMAKE_LIBRARY_PATH="${LIB_DIR};${LIB64_DIR}" \
+    -DCMAKE_INSTALL_RPATH="${LIB_DIR};${LIB64_DIR}" \
+    -DCMAKE_C_FLAGS="-I${LOCAL_DIR}/include" \
+    -Drtl=ON \
+    -Dairspy=OFF
+
+  print_info "Building vdlm2dec"
+  cmake --build "${VDLM2DEC_BUILD_DIR}" --parallel
+
+  print_info "Installing vdlm2dec into ${LOCAL_DIR}"
+  cmake --install "${VDLM2DEC_BUILD_DIR}"
+}
+
+build_aptdec() {
+  require_command cmake
+  ensure_layout
+
+  print_info "Configuring aptdec local build"
+  cmake -S "${APTDEC_SRC_DIR}" -B "${APTDEC_BUILD_DIR}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${LOCAL_DIR}" \
+    -DCMAKE_PREFIX_PATH="${LOCAL_DIR}" \
+    -DCMAKE_INSTALL_RPATH="${LIB_DIR};${LIB64_DIR}"
+
+  print_info "Building aptdec"
+  cmake --build "${APTDEC_BUILD_DIR}" --parallel
+
+  print_info "Installing aptdec into ${LOCAL_DIR}"
+  cmake --install "${APTDEC_BUILD_DIR}"
+}
+
+build_gr_lora() {
+  require_command cmake
+  ensure_layout
+
+  print_info "Configuring gr-lora local build"
+  cmake -S "${GR_LORA_SRC_DIR}" -B "${GR_LORA_BUILD_DIR}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${LOCAL_DIR}" \
+    -DCMAKE_PREFIX_PATH="${LOCAL_DIR}" \
+    -DCMAKE_INSTALL_RPATH="${LIB_DIR};${LIB64_DIR}" \
+    -DPYTHON_EXECUTABLE="$(command -v python3)" \
+    -DENABLE_DOXYGEN=OFF
+
+  print_info "Building gr-lora"
+  cmake --build "${GR_LORA_BUILD_DIR}" --parallel
+
+  print_info "Installing gr-lora into ${LOCAL_DIR}"
+  cmake --install "${GR_LORA_BUILD_DIR}"
+}
+
 bootstrap() {
-  ensure_apt_packages git cmake make gcc pkg-config libusb-1.0-0-dev v4l-utils usbutils multimon-ng rtl-ais sox
+  ensure_apt_packages \
+    git cmake make gcc g++ pkg-config \
+    libusb-1.0-0-dev v4l-utils usbutils sox \
+    multimon-ng rtl-ais readsb direwolf \
+    meson ninja-build libsndfile1-dev libliquid-dev nlohmann-json3-dev libpng-dev \
+    gnuradio gnuradio-dev gr-osmosdr swig libcppunit-dev python3-numpy python3-scipy
   require_command lsusb
   require_command v4l2-ctl
   vendor_rtl_sdr
@@ -570,12 +772,24 @@ bootstrap() {
   build_rtl433
   vendor_acarsdec
   build_acarsdec
-  print_success "Local rtl-sdr, rtl_433, and acarsdec tools installed under ${BIN_DIR}"
+  vendor_redsea
+  build_redsea
+  vendor_vdlm2dec
+  build_vdlm2dec
+  vendor_aptdec
+  build_aptdec
+  vendor_gr_lora
+  build_gr_lora
+  print_success "Local rtl-sdr, rtl_433, acarsdec, redsea, vdlm2dec, aptdec, and gr-lora support installed under ${LOCAL_DIR}"
   print_success "Next steps:"
   printf '  %s\n' "./setup/rtl2838.sh info"
-  printf '  %s\n' "./setup/rtl2838.sh rtl-test"
+  printf '  %s\n' "./setup/rtl2838.sh adsb-monitor"
+  printf '  %s\n' "./setup/rtl2838.sh rds-monitor"
+  printf '  %s\n' "./setup/rtl2838.sh vdl2-monitor"
+  printf '  %s\n' "./setup/rtl2838.sh pager-monitor"
   printf '  %s\n' "./setup/rtl2838.sh rtl433-monitor"
-  printf '  %s\n' "./setup/rtl2838.sh acars-monitor"
+  printf '  %s\n' "./setup/rtl2838.sh noaa-apt-capture --seconds 120"
+  printf '  %s\n' "./setup/rtl2838.sh lora-monitor --seconds 5"
 }
 
 info() {
@@ -586,14 +800,34 @@ info() {
   printf 'Pinned rtl-sdr ref: %s\n' "${DEFAULT_VENDOR_REF}"
   printf 'Pinned rtl_433 ref: %s\n' "${DEFAULT_RTL433_VENDOR_REF}"
   printf 'Pinned acarsdec ref: %s\n' "${DEFAULT_ACARSDEC_VENDOR_REF}"
+  printf 'Pinned redsea ref: %s\n' "${DEFAULT_REDSEA_VENDOR_REF}"
+  printf 'Pinned vdlm2dec ref: %s\n' "${DEFAULT_VDLM2DEC_VENDOR_REF}"
+  printf 'Pinned aptdec ref: %s\n' "${DEFAULT_APTDEC_VENDOR_REF}"
+  printf 'Pinned gr-lora ref: %s\n' "${DEFAULT_GR_LORA_VENDOR_REF}"
   printf '\nUSB:\n'
   detect_usb || true
   printf '\nKernel SDR interface:\n'
   detect_v4l2 || true
   printf '\nLocal tools:\n'
-  for tool in rtl_test rtl_sdr rtl_fm rtl_adsb rtl_433 acarsdec; do
+  for tool in rtl_test rtl_sdr rtl_fm rtl_adsb rtl_433 acarsdec redsea vdlm2dec aptdec; do
     if have_local_tool "${tool}"; then
       printf '  %s%s%s -> %s\n' "${COLOR_GREEN}" "${tool}" "${COLOR_RESET}" "${BIN_DIR}/${tool}"
+    else
+      printf '  %s%s%s -> missing\n' "${COLOR_YELLOW}" "${tool}" "${COLOR_RESET}"
+    fi
+  done
+  if compgen -G "${LOCAL_DIR}/lib/python*/dist-packages/lora*" >/dev/null || \
+     compgen -G "${LOCAL_DIR}/lib/python*/site-packages/lora*" >/dev/null || \
+     compgen -G "${LOCAL_DIR}/lib64/python*/dist-packages/lora*" >/dev/null || \
+     compgen -G "${LOCAL_DIR}/lib64/python*/site-packages/lora*" >/dev/null; then
+    printf '  %s%s%s -> %s\n' "${COLOR_GREEN}" "gr-lora" "${COLOR_RESET}" "python module present"
+  else
+    printf '  %s%s%s -> missing\n' "${COLOR_YELLOW}" "gr-lora" "${COLOR_RESET}"
+  fi
+  printf '\nSystem decoder tools:\n'
+  for tool in readsb direwolf multimon-ng rtl_ais sox; do
+    if command -v "${tool}" >/dev/null 2>&1; then
+      printf '  %s%s%s -> %s\n' "${COLOR_GREEN}" "${tool}" "${COLOR_RESET}" "$(command -v "${tool}")"
     else
       printf '  %s%s%s -> missing\n' "${COLOR_YELLOW}" "${tool}" "${COLOR_RESET}"
     fi
@@ -749,6 +983,11 @@ live_waterfall() {
   local sample_rate="${3:-${DEFAULT_SAMPLE_RATE}}"
   local charset="${4:-${RTL2838_CHARSET:-blocks}}"
 
+  if is_help_request "${1:-}"; then
+    run_python_tool "${LIVE_WATERFALL_TOOL}" --help
+    return 0
+  fi
+
   require_command v4l2-ctl
   require_kernel_device
 
@@ -761,11 +1000,38 @@ live_waterfall() {
     --bandwidth "${DEFAULT_BANDWIDTH}"
 }
 
+run_profile_waterfall() {
+  local profile="${1}"
+  local fps="${2:-${RTL2838_FPS:-12}}"
+  local charset="${3:-${RTL2838_CHARSET:-blocks}}"
+
+  if is_help_request "${profile:-}"; then
+    run_python_tool "${LIVE_WATERFALL_TOOL}" --help
+    return 0
+  fi
+
+  require_command v4l2-ctl
+  require_kernel_device
+
+  run_python_tool "${LIVE_WATERFALL_TOOL}" \
+    --device "${DEFAULT_DEVICE}" \
+    --profile "${profile}" \
+    --fps "${fps}" \
+    --charset "${charset}" \
+    --bandwidth "${DEFAULT_BANDWIDTH}"
+}
+
 eu868_live() {
   local mode="${1:-wide}"
   local sample_rate="${2:-${DEFAULT_SAMPLE_RATE}}"
   local charset="${3:-${RTL2838_CHARSET:-blocks}}"
-  local center_hz profile
+  local center_hz
+  local profile
+
+  if is_help_request "${mode:-}"; then
+    run_python_tool "${LIVE_WATERFALL_TOOL}" --help
+    return 0
+  fi
 
   case "${mode}" in
     wide)
@@ -781,8 +1047,8 @@ eu868_live() {
       profile="eu868-high"
       ;;
     *)
-      center_hz="${mode}"
-      profile="none"
+      live_waterfall "${mode}" "eu868-wide" "${DEFAULT_SAMPLE_RATE}" "${charset}"
+      return 0
       ;;
   esac
 
@@ -794,57 +1060,72 @@ preset_live() {
   local fps="${2:-${RTL2838_FPS:-12}}"
   local charset="${3:-${RTL2838_CHARSET:-blocks}}"
 
-  require_command v4l2-ctl
-  require_kernel_device
-
-  run_python_tool "${LIVE_WATERFALL_TOOL}" \
-    --device "${DEFAULT_DEVICE}" \
-    --profile "${preset}" \
-    --fps "${fps}" \
-    --charset "${charset}" \
-    --bandwidth "${DEFAULT_BANDWIDTH}"
+  run_profile_waterfall "${preset}" "${fps}" "${charset}"
 }
 
-adsb_monitor() {
-  local source='auto'
-  have_local_tool rtl_adsb || die "Missing rtl_adsb. Run ./setup/rtl2838.sh bootstrap first."
-  case "${1:-}" in
-    -h|--help)
-      run_python_tool "${ADSB_MONITOR_TOOL}" --rtl-adsb "${BIN_DIR}/rtl_adsb" "$@"
-      return 0
-      ;;
-  esac
-  if [[ $# -ge 2 && "${1:-}" == "--source" ]]; then
-    source="${2:-auto}"
-  fi
-
-  case "${source}" in
+apply_monitor_mode() {
+  local mode="${1}"
+  case "${mode}" in
     libusb)
       switch_to_libusb
       ;;
     kernel)
       switch_to_kernel
       ;;
-    auto)
+    auto-adsb)
       if [[ -e "${DEFAULT_DEVICE}" ]] && rtl2838_kernel_bound_interface; then
         :
       else
         switch_to_libusb
       fi
       ;;
+    none)
+      ;;
+    *)
+      die "Unsupported monitor mode: ${mode}"
+      ;;
   esac
+}
 
-  run_python_tool "${ADSB_MONITOR_TOOL}" --rtl-adsb "${BIN_DIR}/rtl_adsb" "$@"
+run_monitor_tool() {
+  local tool="${1}"
+  local mode="${2}"
+  shift 2
+
+  local injected=()
+  while [[ $# -gt 0 && "${1}" != "--" ]]; do
+    injected+=("${1}")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
+  local user_args=("$@")
+
+  if is_help_request "${user_args[0]:-}"; then
+    run_python_tool "${tool}" "${injected[@]}" "${user_args[@]}"
+    return 0
+  fi
+
+  apply_monitor_mode "${mode}"
+  run_python_tool "${tool}" "${injected[@]}" "${user_args[@]}"
+}
+
+adsb_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${ADSB_MONITOR_TOOL}" "$@"
+    return 0
+  fi
+  ensure_command_or_apt readsb readsb
+  run_monitor_tool "${ADSB_MONITOR_TOOL}" "libusb" -- "$@"
 }
 
 rtl433_monitor() {
   local preset='868'
   local rtl433_bin
+  if is_help_request "${1:-}"; then
+    run_python_tool "${RTL433_MONITOR_TOOL}" "$@"
+    return 0
+  fi
   case "${1:-}" in
-    -h|--help)
-      run_python_tool "${RTL433_MONITOR_TOOL}" "$@"
-      return 0
-      ;;
     433|868|915)
       preset="${1}"
       shift
@@ -854,65 +1135,100 @@ rtl433_monitor() {
   rtl433_bin="$(resolve_binary_prefer_local "${BIN_DIR}/rtl_433" "rtl_433" || true)"
   [[ -n "${rtl433_bin}" ]] || die "Missing rtl_433. Run ./setup/rtl2838.sh bootstrap to build the repo-local copy."
 
-  switch_to_libusb
-  run_python_tool "${RTL433_MONITOR_TOOL}" --rtl433 "${rtl433_bin}" --preset "${preset}" "$@"
+  run_monitor_tool "${RTL433_MONITOR_TOOL}" "libusb" -- --rtl433 "${rtl433_bin}" --preset "${preset}" "$@"
 }
 
 aprs_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${APRS_MONITOR_TOOL}" "$@"
+    return 0
+  fi
   have_local_tool rtl_fm || die "Missing rtl_fm. Run ./setup/rtl2838.sh bootstrap first."
-  case "${1:-}" in
-    -h|--help)
-      run_python_tool "${APRS_MONITOR_TOOL}" "$@"
-      return 0
-      ;;
-  esac
   ensure_command_or_apt multimon-ng multimon-ng
-  switch_to_libusb
-  run_python_tool "${APRS_MONITOR_TOOL}" --rtl-fm "${BIN_DIR}/rtl_fm" "$@"
+  run_monitor_tool "${APRS_MONITOR_TOOL}" "libusb" -- --rtl-fm "${BIN_DIR}/rtl_fm" "$@"
 }
 
 acars_monitor() {
   local acarsdec_bin
-  case "${1:-}" in
-    -h|--help)
-      acarsdec_bin="$(resolve_binary_prefer_local "${BIN_DIR}/acarsdec" "acarsdec" || true)"
-      if [[ -n "${acarsdec_bin}" ]]; then
-        run_python_tool "${ACARS_MONITOR_TOOL}" --acarsdec "${acarsdec_bin}" "$@"
-      else
-        run_python_tool "${ACARS_MONITOR_TOOL}" "$@"
-      fi
-      return 0
-      ;;
-  esac
+  if is_help_request "${1:-}"; then
+    run_python_tool "${ACARS_MONITOR_TOOL}" "$@"
+    return 0
+  fi
   acarsdec_bin="$(resolve_binary_prefer_local "${BIN_DIR}/acarsdec" "acarsdec" || true)"
   [[ -n "${acarsdec_bin}" ]] || die "Missing acarsdec. Run ./setup/rtl2838.sh bootstrap first."
-  switch_to_libusb
-  run_python_tool "${ACARS_MONITOR_TOOL}" --acarsdec "${acarsdec_bin}" "$@"
+  run_monitor_tool "${ACARS_MONITOR_TOOL}" "libusb" -- --acarsdec "${acarsdec_bin}" "$@"
 }
 
 ais_monitor() {
-  case "${1:-}" in
-    -h|--help)
-      run_python_tool "${AIS_MONITOR_TOOL}" "$@"
-      return 0
-      ;;
-  esac
+  if is_help_request "${1:-}"; then
+    run_python_tool "${AIS_MONITOR_TOOL}" "$@"
+    return 0
+  fi
   ensure_command_or_apt rtl_ais rtl-ais
-  switch_to_libusb
-  run_python_tool "${AIS_MONITOR_TOOL}" "$@"
+  run_monitor_tool "${AIS_MONITOR_TOOL}" "libusb" -- "$@"
 }
 
 weather_alert_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${WEATHER_ALERT_MONITOR_TOOL}" "$@"
+    return 0
+  fi
   have_local_tool rtl_fm || die "Missing rtl_fm. Run ./setup/rtl2838.sh bootstrap first."
-  case "${1:-}" in
-    -h|--help)
-      run_python_tool "${WEATHER_ALERT_MONITOR_TOOL}" "$@"
-      return 0
-      ;;
-  esac
   ensure_command_or_apt multimon-ng multimon-ng
-  switch_to_libusb
-  run_python_tool "${WEATHER_ALERT_MONITOR_TOOL}" --rtl-fm "${BIN_DIR}/rtl_fm" "$@"
+  run_monitor_tool "${WEATHER_ALERT_MONITOR_TOOL}" "libusb" -- --rtl-fm "${BIN_DIR}/rtl_fm" "$@"
+}
+
+rds_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${RDS_MONITOR_TOOL}" "$@"
+    return 0
+  fi
+  have_local_tool rtl_fm || die "Missing rtl_fm. Run ./setup/rtl2838.sh bootstrap first."
+  have_local_tool redsea || die "Missing redsea. Run ./setup/rtl2838.sh bootstrap first."
+  run_monitor_tool "${RDS_MONITOR_TOOL}" "libusb" -- --rtl-fm "${BIN_DIR}/rtl_fm" --redsea "${BIN_DIR}/redsea" "$@"
+}
+
+vdl2_monitor() {
+  local vdlm2dec_bin
+  if is_help_request "${1:-}"; then
+    run_python_tool "${VDL2_MONITOR_TOOL}" "$@"
+    return 0
+  fi
+  vdlm2dec_bin="$(resolve_binary_prefer_local "${BIN_DIR}/vdlm2dec" "vdlm2dec" || true)"
+  [[ -n "${vdlm2dec_bin}" ]] || die "Missing vdlm2dec. Run ./setup/rtl2838.sh bootstrap first."
+  run_monitor_tool "${VDL2_MONITOR_TOOL}" "libusb" -- --vdlm2dec "${vdlm2dec_bin}" "$@"
+}
+
+pager_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${PAGER_MONITOR_TOOL}" "$@"
+    return 0
+  fi
+  have_local_tool rtl_fm || die "Missing rtl_fm. Run ./setup/rtl2838.sh bootstrap first."
+  ensure_command_or_apt multimon-ng multimon-ng
+  run_monitor_tool "${PAGER_MONITOR_TOOL}" "libusb" -- --rtl-fm "${BIN_DIR}/rtl_fm" "$@"
+}
+
+noaa_apt_capture_cmd() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${NOAA_APT_CAPTURE_TOOL}" "$@"
+    return 0
+  fi
+  have_local_tool rtl_fm || die "Missing rtl_fm. Run ./setup/rtl2838.sh bootstrap first."
+  have_local_tool aptdec || die "Missing aptdec. Run ./setup/rtl2838.sh bootstrap first."
+  ensure_command_or_apt sox sox
+  apply_monitor_mode "libusb"
+  run_python_tool "${NOAA_APT_CAPTURE_TOOL}" --rtl-fm "${BIN_DIR}/rtl_fm" --aptdec "${BIN_DIR}/aptdec" "$@"
+}
+
+lora_monitor() {
+  if is_help_request "${1:-}"; then
+    run_python_tool "${LORA_MONITOR_TOOL}" "$@"
+    return 0
+  fi
+  have_local_tool rtl_sdr || die "Missing rtl_sdr. Run ./setup/rtl2838.sh bootstrap first."
+  apply_monitor_mode "libusb"
+  run_python_tool "${LORA_MONITOR_TOOL}" --rtl-sdr "${BIN_DIR}/rtl_sdr" "$@"
 }
 
 rtl_test_cmd() {
@@ -1014,6 +1330,21 @@ normalize_command_alias() {
     rf_weather_alert_monitor|rf-weather-alert-monitor)
       printf 'weather-alert-monitor\n'
       ;;
+    rf_rds_monitor|rf-rds-monitor)
+      printf 'rds-monitor\n'
+      ;;
+    rf_vdl2_monitor|rf-vdl2-monitor)
+      printf 'vdl2-monitor\n'
+      ;;
+    rf_pager_monitor|rf-pager-monitor)
+      printf 'pager-monitor\n'
+      ;;
+    rf_noaa_apt_capture)
+      printf 'noaa-apt-capture\n'
+      ;;
+    rf_lora_monitor|rf-lora-monitor)
+      printf 'lora-monitor\n'
+      ;;
     *)
       printf '%s\n' "${1:-help}"
       ;;
@@ -1081,6 +1412,21 @@ dispatch_command() {
       ;;
     weather-alert-monitor)
       weather_alert_monitor "$@"
+      ;;
+    rds-monitor)
+      rds_monitor "$@"
+      ;;
+    vdl2-monitor)
+      vdl2_monitor "$@"
+      ;;
+    pager-monitor)
+      pager_monitor "$@"
+      ;;
+    noaa-apt-capture)
+      noaa_apt_capture_cmd "$@"
+      ;;
+    lora-monitor)
+      lora_monitor "$@"
       ;;
     rtl-test)
       rtl_test_cmd "$@"

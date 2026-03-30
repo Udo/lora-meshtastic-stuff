@@ -227,19 +227,28 @@ Common commands:
 ./setup/rtl2838.sh preset-live aprs-monitor
 ./setup/rtl2838.sh preset-live ais-monitor
 ./setup/rtl2838.sh preset-live acars-monitor
+./setup/rtl2838.sh preset-live rds-monitor
+./setup/rtl2838.sh preset-live vdl2-monitor
+./setup/rtl2838.sh preset-live pager-monitor
+./setup/rtl2838.sh preset-live noaa-apt-monitor
+./setup/rtl2838.sh preset-live lora-monitor
 ./setup/rtl2838.sh preset-live weather-alert-monitor
 ./setup/rtl2838.sh preset-live rtl433-868
 ./setup/rtl2838.sh preset-live broadband-868
 ./setup/rtl2838.sh adsb-monitor
-./setup/rtl2838.sh adsb-monitor --source libusb
 ./setup/rtl2838.sh aprs-monitor
 ./setup/rtl2838.sh ais-monitor
 ./setup/rtl2838.sh weather-alert-monitor
+./setup/rtl2838.sh rds-monitor
+./setup/rtl2838.sh vdl2-monitor
+./setup/rtl2838.sh pager-monitor
 ./setup/rtl2838.sh rtl433-monitor
 ./setup/rtl2838.sh rtl433-monitor 433
 ./setup/rtl2838.sh rtl433-monitor 915
 ./setup/rtl2838.sh rtl433-monitor --log-file rtl2838/logs/rtl433.jsonl
 ./setup/rtl2838.sh acars-monitor
+./setup/rtl2838.sh noaa-apt-capture --seconds 120
+./setup/rtl2838.sh lora-monitor --seconds 5
 ./setup/rtl2838.sh live-waterfall
 ./setup/rtl2838.sh eu868-live wide 3200000 ascii
 RTL2838_NORM_MODE=row ./setup/rtl2838.sh eu868-live
@@ -252,7 +261,7 @@ python3 tools/rtl2838_live_waterfall.py --profile eu868-wide --fps 12 --markers 
 ./setup/rtl2838.sh fm 101900000 20
 ```
 
-`./setup/rtl2838.sh bootstrap` vendors and builds `rtl-sdr`, `rtl_433`, and `acarsdec` under `rtl2838/local/`, and auto-installs the apt-managed host prerequisites needed by the shipped SDR tools on Ubuntu/Debian.
+`./setup/rtl2838.sh bootstrap` vendors and builds `rtl-sdr`, `rtl_433`, `acarsdec`, `redsea`, `vdlm2dec`, `aptdec`, and `gr-lora` support under `rtl2838/local/`, and auto-installs the apt-managed host prerequisites needed by the shipped SDR tools on Ubuntu/Debian.
 
 The repo also now includes live decoder/logging monitors for public RF traffic:
 
@@ -262,8 +271,13 @@ The repo also now includes live decoder/logging monitors for public RF traffic:
 - `ais-monitor` for marine AIS on `161.975` / `162.025 MHz`
 - `weather-alert-monitor` for SAME/EAS headers around `162.550 MHz`
 - `acars-monitor` for ACARS aircraft text channels
+- `rds-monitor` for FM RDS / RBDS via `redsea`
+- `vdl2-monitor` for VDL2 aviation data
+- `pager-monitor` for POCSAG pager traffic
+- `noaa-apt-capture` for NOAA weather satellite pass capture plus image decode
+- `lora-monitor` for gr-lora-backed annotated raw LoRa hex dumps
 
-Each monitor supports `--log-file <path>` for JSONL event logging while keeping the live TUI active. `bootstrap` now preinstalls the apt-managed runtime dependencies and builds the repo-local `acarsdec` binary too, so the shipped SDR tools do not need deferred package discovery later.
+Each monitor supports `--log-file <path>` for JSONL event logging while keeping the live TUI active where applicable. `bootstrap` now preinstalls the apt-managed runtime dependencies and builds the repo-local decoder binaries too, so the shipped SDR tools do not need deferred package discovery later.
 
 See [docs/rtl2838.md](docs/rtl2838.md) for the repo-local SDR workflow, vendoring layout, and capture notes.
 
